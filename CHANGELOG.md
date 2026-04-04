@@ -49,5 +49,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Type hints throughout codebase
 - Async/await for I/O operations
 
-[unreleased]: https://github.com/yourusername/omnivoice-server/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/yourusername/omnivoice-server/releases/tag/v0.1.0
+[unreleased]: https://github.com/maemreyo/omnivoice-server/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/maemreyo/omnivoice-server/releases/tag/v0.1.0

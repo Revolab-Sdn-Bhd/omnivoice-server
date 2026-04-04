@@ -410,7 +410,7 @@ chmod +x curl_examples.sh
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/omnivoice-server.git
+git clone https://github.com/maemreyo/omnivoice-server.git
 cd omnivoice-server
 
 # Install with dev dependencies
@@ -554,5 +554,5 @@ Built on top of [OmniVoice](https://github.com/k2-fsa/OmniVoice) by k2-fsa.
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/omnivoice-server/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/omnivoice-server/discussions)
+- **Issues**: [GitHub Issues](https://github.com/maemreyo/omnivoice-server/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/maemreyo/omnivoice-server/discussions)
