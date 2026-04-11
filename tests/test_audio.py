@@ -5,6 +5,7 @@ Tests for audio utilities.
 from __future__ import annotations
 
 import io
+import struct
 
 import pytest
 import torch
@@ -88,12 +89,20 @@ def test_read_upload_bounded_too_large():
 
 def test_validate_audio_bytes_valid_wav():
     """Valid WAV bytes should pass validation."""
-    # Create a minimal valid WAV
-    tensor = torch.randn(1, 1000)
-    buf = io.BytesIO()
-    torchaudio.save(buf, tensor, 24000, format="wav")
-    buf.seek(0)
-    audio_bytes = buf.read()
+    # Build minimal valid WAV without torchaudio (torchcodec breaks on BytesIO)
+    num_frames = 1000
+    data_size = num_frames * 2  # 16-bit mono
+    audio_bytes = (
+        b"RIFF"
+        + struct.pack("<I", 36 + data_size)
+        + b"WAVE"
+        + b"fmt "
+        + struct.pack("<I", 16)
+        + struct.pack("<HHIIHH", 1, 1, 24000, 48000, 2, 16)
+        + b"data"
+        + struct.pack("<I", data_size)
+        + b"\x00" * data_size
+    )
 
     # Should not raise
     validate_audio_bytes(audio_bytes)
@@ -129,12 +138,20 @@ def test_validate_audio_bytes_empty_audio():
 
 def test_validate_audio_bytes_low_sample_rate():
     """Audio with sample rate below 8000Hz should raise ValueError."""
-    # Create audio at 4000Hz (too low)
-    tensor = torch.randn(1, 1000)
-    buf = io.BytesIO()
-    torchaudio.save(buf, tensor, 4000, format="wav")
-    buf.seek(0)
-    audio_bytes = buf.read()
+    # Build WAV at 4000Hz without torchaudio (torchcodec breaks on BytesIO)
+    num_frames = 1000
+    data_size = num_frames * 2
+    audio_bytes = (
+        b"RIFF"
+        + struct.pack("<I", 36 + data_size)
+        + b"WAVE"
+        + b"fmt "
+        + struct.pack("<I", 16)
+        + struct.pack("<HHIIHH", 1, 1, 4000, 8000, 2, 16)
+        + b"data"
+        + struct.pack("<I", data_size)
+        + b"\x00" * data_size
+    )
 
     with pytest.raises(ValueError, match="sample rate.*too low"):
         validate_audio_bytes(audio_bytes)

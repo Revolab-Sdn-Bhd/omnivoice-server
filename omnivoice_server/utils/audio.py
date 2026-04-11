@@ -23,17 +23,25 @@ def tensor_to_wav_bytes(tensor: torch.Tensor) -> bytes:
     if cpu_tensor.dim() == 1:
         cpu_tensor = cpu_tensor.unsqueeze(0)
 
-    buf = io.BytesIO()
-    torchaudio.save(
-        buf,
-        cpu_tensor,
-        SAMPLE_RATE,
-        format="wav",
-        encoding="PCM_S",
-        bits_per_sample=16,
-    )
-    buf.seek(0)
-    return buf.read()
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        torchaudio.save(
+            tmp_path,
+            cpu_tensor,
+            SAMPLE_RATE,
+            format="wav",
+            encoding="PCM_S",
+            bits_per_sample=16,
+        )
+        with open(tmp_path, "rb") as f:
+            return f.read()
+    finally:
+        import os
+
+        os.unlink(tmp_path)
 
 
 def tensors_to_wav_bytes(tensors: list[torch.Tensor]) -> bytes:
@@ -72,14 +80,31 @@ def validate_audio_bytes(data: bytes, field_name: str = "ref_audio") -> None:
     """
     Lightweight validation: check that bytes are parseable as audio.
     Does NOT decode the full file — only reads metadata.
+    Uses stdlib wave module for WAV files, falls back to torchaudio.load
+    for other formats.
     """
+    # Try stdlib wave first (handles WAV robustly, no torchcodec dependency)
+    import wave
+
+    try:
+        with wave.open(io.BytesIO(data), "rb") as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            if frames == 0:
+                raise ValueError(f"{field_name}: audio file has 0 frames")
+            if rate < 8000:
+                raise ValueError(f"{field_name}: sample rate {rate}Hz too low (min 8000Hz)")
+            return
+    except wave.Error:
+        pass  # Not a WAV file, try torchaudio below
+
     try:
         buf = io.BytesIO(data)
-        info = torchaudio.info(buf)
-        if info.num_frames == 0:
+        waveform, sample_rate = torchaudio.load(buf)
+        if waveform.shape[-1] == 0:
             raise ValueError(f"{field_name}: audio file has 0 frames")
-        if info.sample_rate < 8000:
-            raise ValueError(f"{field_name}: sample rate {info.sample_rate}Hz too low (min 8000Hz)")
+        if sample_rate < 8000:
+            raise ValueError(f"{field_name}: sample rate {sample_rate}Hz too low (min 8000Hz)")
     except Exception as e:
         if isinstance(e, ValueError):
             raise
