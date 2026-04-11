@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import socket
 
 
 def main() -> None:
@@ -124,6 +125,29 @@ def main() -> None:
         help="Bearer token for auth. Empty = no auth (env: OMNIVOICE_API_KEY)",
     )
 
+    # Multi-worker / MPS
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        dest="workers",
+        help="Number of worker processes (default: 1, set 4+ for MPS parallel)",
+    )
+    parser.add_argument(
+        "--mps-enabled",
+        choices=["auto", "true", "false"],
+        default=None,
+        dest="mps_enabled",
+        help="MPS daemon mode (default: auto)",
+    )
+    parser.add_argument(
+        "--mps-active-thread-pct",
+        type=int,
+        default=None,
+        dest="mps_active_thread_percentage",
+        help="GPU compute percentage for MPS (1-100, default: 100)",
+    )
+
     args = parser.parse_args()
 
     overrides = {k: v for k, v in vars(args).items() if v is not None}
@@ -140,6 +164,68 @@ def main() -> None:
         stream=sys.stderr,
     )
 
+    logger = logging.getLogger(__name__)
+
+    if cfg.workers > 1:
+        # Multi-worker mode with MPS
+        from omnivoice_server.mps import MPSManager
+        from omnivoice_server.worker_manager import WorkerManager
+
+        mps_mgr = None
+        if cfg.mps_should_enable:
+            mps_mgr = MPSManager(
+                active_thread_percentage=cfg.mps_active_thread_percentage
+            )
+            if not mps_mgr.start():
+                logger.warning(
+                    "MPS failed to start, falling back to single-worker mode"
+                )
+                cfg = cfg.model_copy(update={"workers": 1})
+
+        if cfg.workers > 1:
+            worker_mgr = WorkerManager(
+                num_workers=cfg.workers,
+                host=cfg.host,
+                port=cfg.port,
+            )
+            fd = worker_mgr.create_shared_socket()
+
+            def worker_main():
+                """Each worker: create app, load model via lifespan, serve on inherited socket."""
+                import asyncio
+
+                import uvicorn
+
+                from omnivoice_server.app import create_app
+
+                app = create_app(cfg)
+                # Slot 0 worker writes VRAM measurement during lifespan (see app.py).
+                # Use socket from inherited fd
+                sock = socket.socket(
+                    fileno=fd, family=socket.AF_INET, type=socket.SOCK_STREAM
+                )
+                config = uvicorn.Config(app, workers=1, log_level=cfg.log_level)
+                server = uvicorn.Server(config=config)
+                asyncio.run(server.serve(sockets=[sock]))
+
+            # Fork workers with VRAM guard
+            worker_mgr.spawn_with_vram_guard(worker_main)
+
+            mps_active = mps_mgr is not None and mps_mgr.status.value == "running"
+            logger.info("OMNIVOICE_READY workers=%d mps=%s", cfg.workers, mps_active)
+            print(f"OMNIVOICE_READY workers={cfg.workers} mps={mps_active}")
+
+            try:
+                worker_mgr.monitor(mps_manager=mps_mgr)
+            except KeyboardInterrupt:
+                pass
+            finally:
+                worker_mgr.shutdown(timeout=cfg.shutdown_timeout)
+                if mps_mgr:
+                    mps_mgr.stop()
+            return
+
+    # Single-worker mode: existing behavior (uvicorn.run)
     import uvicorn
 
     from .app import create_app
