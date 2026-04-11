@@ -36,3 +36,4 @@ temp.log
 
 # Voice samples (stored in GitHub Releases)
 voice_samples/*.wav
+output*
