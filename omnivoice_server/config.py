@@ -48,6 +48,14 @@ class Settings(BaseSettings):
             "'none'=disabled, 'max-autotune'=best perf but slow first compile."
         ),
     )
+    compile_cache_dir: Path | None = Field(
+        default=None,
+        description=(
+            "Persistent directory for torch.compile Inductor cache. "
+            "Populate via: python scripts/precompile_model.py --cache-dir DIR. "
+            "If set, server loads cached kernels instead of recompiling."
+        ),
+    )
     quantization: Literal["none", "fp8wo", "fp8dq", "int8wo", "int8dq"] = Field(
         default="none",
         description=(

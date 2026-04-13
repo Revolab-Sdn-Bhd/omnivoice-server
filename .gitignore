@@ -48,3 +48,6 @@ output_malay_eng/
 
 # Temporary debug scripts
 tmp*.py
+
+# Torch compile cache (generated, not versioned)
+torch_compile_cache/

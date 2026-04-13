@@ -140,14 +140,27 @@ class ModelService:
 
     def _apply_compile(self) -> None:
         """Apply torch.compile to the LLM backbone."""
-        import torch
+        import os
+
+        # Set persistent cache dir so compiled kernels survive restarts
+        if self.cfg.compile_cache_dir is not None:
+            cache_dir = str(self.cfg.compile_cache_dir)
+            os.environ["TORCHINDUCTOR_CACHE_DIR"] = cache_dir
+            logger.info("Inductor cache dir: %s", cache_dir)
 
         logger.info(
             "Applying torch.compile(mode=%s) to LLM backbone", self.cfg.compile_mode
         )
         compiled = torch.compile(self._model.llm, mode=self.cfg.compile_mode)
         self._model.llm = compiled
-        logger.info("torch.compile applied (first inference will compile, then cached)")
+
+        cache_status = ""
+        if self.cfg.compile_cache_dir is not None:
+            cache_status = " (cached kernels will be reused if available)"
+        logger.info(
+            "torch.compile applied%s — first inference triggers compilation",
+            cache_status,
+        )
 
 
 def _get_ram_mb() -> float:
