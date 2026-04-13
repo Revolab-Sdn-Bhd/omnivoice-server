@@ -41,6 +41,7 @@ class SynthesisRequest:
     position_temperature: float | None = None
     class_temperature: float | None = None
     duration: float | None = None  # Fixed output duration in seconds
+    language: str | None = None  # Optional language code for multilingual pronunciation
 
 
 @dataclass
@@ -99,6 +100,10 @@ class OmniVoiceAdapter:
         # Add optional duration parameter if provided
         if req.duration is not None:
             kwargs["duration"] = req.duration
+
+        # Add optional language parameter if provided
+        if req.language is not None:
+            kwargs["language"] = req.language
 
         if req.mode == "design" and req.instruct:
             kwargs["instruct"] = req.instruct

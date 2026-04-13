@@ -45,6 +45,10 @@ class SpeechRequest(BaseModel):
     position_temperature: float | None = Field(default=None, ge=0.0, le=10.0)
     class_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     duration: float | None = Field(default=None, ge=0.1, le=60.0)
+    language: str | None = Field(
+        default=None,
+        description="Optional language code (e.g., 'en', 'vi', 'zh') for improved multilingual pronunciation",
+    )
 
     @field_validator("model")
     @classmethod
@@ -117,6 +121,7 @@ async def create_speech(
         position_temperature=body.position_temperature,
         class_temperature=body.class_temperature,
         duration=body.duration,
+        language=body.language,
     )
 
     if body.stream:
