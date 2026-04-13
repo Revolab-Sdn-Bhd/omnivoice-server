@@ -1,0 +1,31 @@
+[Unit]
+Description=OmniVoice TTS Server
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+Environment=CUDA_VISIBLE_DEVICES=0
+EnvironmentFile=-/etc/omnivoice/env
+ExecStart=/home/ubuntu/app/.venv/bin/python -m omnivoice_server \
+    --host 0.0.0.0 \
+    --port 8880 \
+    --device cuda \
+    --profile-dir /home/ubuntu/app/profiles
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=16G
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=omnivoice
+
+[Install]
+WantedBy=multi-user.target

@@ -191,6 +191,9 @@ class InferenceService:
         self._batch_task: asyncio.Task | None = None
         self._pending: int = 0
 
+        # Request deduplication: hash → future for in-flight requests
+        self._inflight: dict[str, asyncio.Future] = {}
+
     def start_batch_scheduler(self) -> None:
         """Start the batch scheduler loop (call after event loop starts)."""
         if not self._cfg.batch_enabled:
@@ -212,19 +215,58 @@ class InferenceService:
     def pending_count(self) -> int:
         return self._pending
 
+    @staticmethod
+    def _request_hash(req: SynthesisRequest) -> str:
+        """Deterministic hash of request parameters for dedup."""
+        import hashlib
+        import json
+
+        payload = json.dumps({
+            "t": req.text,
+            "m": req.mode,
+            "i": req.instruct,
+            "s": req.speed,
+            "ns": req.num_step,
+            "gs": req.guidance_scale,
+            "d": req.denoise,
+            "ts": req.t_shift,
+            "pt": req.position_temperature,
+            "ct": req.class_temperature,
+            "dur": req.duration,
+        }, sort_keys=True)
+        return hashlib.sha256(payload.encode()).hexdigest()[:24]
+
     async def synthesize(self, req: SynthesisRequest) -> SynthesisResult:
         if self._pending >= self._cfg.max_queue_depth:
             raise QueueFullError(
                 f"{self._pending} pending >= {self._cfg.max_queue_depth}"
             )
+
+        # Deduplicate concurrent identical requests
+        req_hash = self._request_hash(req)
+        if req_hash in self._inflight:
+            logger.debug("Dedup: joining in-flight request %s", req_hash[:12])
+            return await self._inflight[req_hash]
+
         self._pending += 1
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self._inflight[req_hash] = future
+
         try:
             if self._cfg.batch_enabled and self._batch_queue is not None:
-                return await self._synthesize_batched(req)
-            if self._executor is not None:
-                return await self._synthesize_threaded(req)
-            return await self._synthesize_direct(req)
+                result = await self._synthesize_batched(req)
+            elif self._executor is not None:
+                result = await self._synthesize_threaded(req)
+            else:
+                result = await self._synthesize_direct(req)
+            future.set_result(result)
+            return result
+        except Exception as e:
+            future.set_exception(e)
+            raise
         finally:
+            self._inflight.pop(req_hash, None)
             self._pending -= 1
 
     async def _synthesize_batched(self, req: SynthesisRequest) -> SynthesisResult:

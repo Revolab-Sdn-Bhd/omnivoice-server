@@ -49,6 +49,10 @@ class SpeechRequest(BaseModel):
         default=None,
         description="Language code (e.g., 'en', 'vi', 'zh') for multilingual pronunciation",
     )
+    timeout: float | None = Field(
+        default=None, ge=1.0, le=300.0,
+        description="Max wait in seconds. Uses server default if not set.",
+    )
 
     @field_validator("model")
     @classmethod
@@ -182,9 +186,12 @@ async def create_speech(
                 },
             )
 
-    # Run inference
+    # Run inference (with optional per-request timeout)
     try:
-        result = await inference_svc.synthesize(req)
+        timeout_s = body.timeout or cfg.request_timeout_s
+        result = await asyncio.wait_for(
+            inference_svc.synthesize(req), timeout=timeout_s,
+        )
         metrics_svc.record_success(result.latency_s)
     except QueueFullError as e:
         raise HTTPException(

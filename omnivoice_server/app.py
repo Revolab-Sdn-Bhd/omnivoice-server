@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
@@ -29,6 +30,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cfg: Settings = app.state.cfg
+
+    # Startup config validation
+    _validate_config(cfg)
+
     app.state.start_time = time.time()
     app.state.metrics_svc = MetricsService()
 
@@ -159,6 +164,16 @@ async def lifespan(app: FastAPI):
         app.state.executor.shutdown(wait=False)
 
 
+def _validate_config(cfg: Settings) -> None:
+    """Fail-fast validation of config combinations."""
+    if cfg.device == "cpu" and cfg.workers > 1:
+        logger.warning("Multi-worker with CPU device has no benefit; using workers=1")
+        cfg.workers = 1
+    if cfg.device not in ("cuda",) and cfg.compile_mode != "none":
+        logger.warning("torch.compile only benefits CUDA; disabling")
+        cfg.compile_mode = "none"  # type: ignore[assignment]
+
+
 def _status_to_code(status_code: int) -> str:
     _map = {
         400: "bad_request",
@@ -186,13 +201,26 @@ def create_app(cfg: Settings) -> FastAPI:
 
     app.state.cfg = cfg
 
+    # ── Request ID middleware ────────────────────────────────────────────────
+    @app.middleware("http")
+    async def request_id_middleware(request: Request, call_next):
+        request_id = request.headers.get(
+            "X-Request-ID", uuid.uuid4().hex[:16]
+        )
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
     # ── Auth middleware ───────────────────────────────────────────────────────
     if cfg.api_key:
 
         @app.middleware("http")
         async def auth_middleware(request: Request, call_next):
             # Skip auth for health, metrics, and model listing
-            if request.url.path in ("/health", "/metrics", "/v1/models"):
+            if request.url.path in (
+                "/health", "/live", "/ready",
+                "/metrics", "/metrics/prometheus", "/v1/models",
+            ):
                 return await call_next(request)
             auth = request.headers.get("Authorization", "")
             if auth != f"Bearer {cfg.api_key}":
