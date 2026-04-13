@@ -5,6 +5,7 @@ All shared state lives on app.state — no module-level globals.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -76,18 +77,54 @@ async def lifespan(app: FastAPI):
                 }, f)
             logger.info("VRAM measurement written: %.0f MB -> %s", peak_mb, vram_file)
 
-    # Warmup: prime CUDA kernels, memory allocators, and torch JIT caches
-    # so the first real request isn't garbage.
+    # Auto-benchmark and warmup
     if app.state.model_svc.is_loaded:
+        from .services.gpu_benchmark import find_optimal_batch_size
+
+        # Run GPU benchmark to find optimal batch size (blocking, run in executor)
+        loop = asyncio.get_running_loop()
+        model = app.state.model_svc.model
+        bench = await loop.run_in_executor(None, find_optimal_batch_size, model)
+        app.state.gpu_benchmark = bench
+        optimal_bs = bench["optimal_batch_size"]
+
+        # Override batch_max_size if not explicitly set by user
+        if not cfg.batch_enabled:
+            logger.info("Batching disabled, using single-request mode")
+        else:
+            if cfg.batch_max_size == 4:  # default value, not user-set
+                cfg = cfg.model_copy(update={"batch_max_size": optimal_bs})
+                app.state.cfg = cfg
+                app.state.inference_svc.cfg = cfg
+            logger.info(
+                "Batch config: max_size=%d, timeout=%dms",
+                cfg.batch_max_size, cfg.batch_timeout_ms,
+            )
+
+        # Warmup with optimal batch size to prime compiled kernels
         try:
-            warmup_text = "Warmup inference for CUDA kernel compilation."
-            for i in range(5):
+            warmup_texts = [
+                "Warmup inference for CUDA kernel compilation.",
+                "Second warmup pass to ensure all kernels are cached.",
+            ]
+            for _ in range(3):
                 await app.state.inference_svc.synthesize(
-                    SynthesisRequest(text=warmup_text, mode="auto")
+                    SynthesisRequest(text=warmup_texts[0], mode="auto")
                 )
-            logger.info("Warmup complete (5 inference calls)")
+            # Batch warmup
+            for _ in range(2):
+                await app.state.inference_svc.synthesize(
+                    SynthesisRequest(text=warmup_texts[0], mode="auto")
+                )
+                await app.state.inference_svc.synthesize(
+                    SynthesisRequest(text=warmup_texts[1], mode="auto")
+                )
+            logger.info(
+                "Warmup complete — optimal_batch=%d, throughput=%.1f req/s",
+                optimal_bs, bench["optimal_throughput_req_s"],
+            )
         except Exception:
-            logger.debug("Warmup skipped (model not fully initialized)")
+            logger.warning("Warmup encountered errors (non-fatal)")
 
     # Start batch scheduler if enabled
     if hasattr(app.state.inference_svc, "start_batch_scheduler"):

@@ -30,7 +30,7 @@ async def health(request: Request):
         )
 
     uptime_s = round(time.monotonic() - request.app.state.start_time, 1)
-    return {
+    result = {
         "status": "healthy",
         "ready": True,
         "model_loaded": True,
@@ -38,6 +38,18 @@ async def health(request: Request):
         "model_id": cfg.model_id,
         "memory_rss_mb": ram_mb,
     }
+
+    # Include GPU benchmark results if available
+    bench = getattr(request.app.state, "gpu_benchmark", None)
+    if bench:
+        result["gpu_benchmark"] = {
+            "optimal_batch_size": bench["optimal_batch_size"],
+            "throughput_req_s": bench["optimal_throughput_req_s"],
+            "vram_used_mb": bench["vram_used_mb"],
+            "vram_total_mb": bench["vram_total_mb"],
+        }
+
+    return result
 
 
 @router.get("/metrics")

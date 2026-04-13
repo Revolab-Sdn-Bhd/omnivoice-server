@@ -1,6 +1,0 @@
-device,num_step,test_case,mode,run_index,latency_ms,audio_duration_ms,rtf,ram_before_mb,ram_after_mb,ram_delta_mb,error
-cpu,32,short_auto,auto,0,10335.9,2080.0,4.9692,2479.5,2422.6,-56.9,
-cpu,32,short_auto,auto,1,9945.8,2080.0,4.7817,2422.6,2432.9,10.3,
-cpu,32,short_auto,auto,2,10446.2,2080.0,5.0222,2432.9,2393.4,-39.5,
-cpu,32,short_auto,auto,3,10304.4,2080.0,4.954,2393.4,2403.4,10.0,
-cpu,32,short_auto,auto,4,10128.4,2080.0,4.8694,2403.4,2406.1,2.6,

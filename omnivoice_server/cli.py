@@ -148,6 +148,57 @@ def main() -> None:
         help="GPU compute percentage for MPS (1-100, default: 100)",
     )
 
+    # Optimization
+    parser.add_argument(
+        "--compile-mode",
+        choices=["none", "default", "reduce-overhead", "max-autotune"],
+        default=None,
+        dest="compile_mode",
+        help="torch.compile mode for LLM backbone (env: OMNIVOICE_COMPILE_MODE)",
+    )
+    parser.add_argument(
+        "--compile-cache-dir",
+        default=None,
+        dest="compile_cache_dir",
+        help="Persistent dir for torch.compile cache (env: OMNIVOICE_COMPILE_CACHE_DIR)",
+    )
+    parser.add_argument(
+        "--quantization",
+        choices=["none", "fp8wo", "fp8dq", "int8wo", "int8dq"],
+        default=None,
+        dest="quantization",
+        help="TorchAO quantization for LLM backbone (env: OMNIVOICE_QUANTIZATION)",
+    )
+    parser.add_argument(
+        "--model-cache-dir",
+        default=None,
+        dest="model_cache_dir",
+        help="Override HuggingFace model cache dir (env: OMNIVOICE_MODEL_CACHE_DIR)",
+    )
+
+    # Batching
+    parser.add_argument(
+        "--batch-enabled",
+        action="store_true",
+        default=None,
+        dest="batch_enabled",
+        help="Enable request batching (env: OMNIVOICE_BATCH_ENABLED)",
+    )
+    parser.add_argument(
+        "--batch-max-size",
+        type=int,
+        default=None,
+        dest="batch_max_size",
+        help="Max requests per batch (env: OMNIVOICE_BATCH_MAX_SIZE)",
+    )
+    parser.add_argument(
+        "--batch-timeout-ms",
+        type=int,
+        default=None,
+        dest="batch_timeout_ms",
+        help="Max ms to wait before processing batch (env: OMNIVOICE_BATCH_TIMEOUT_MS)",
+    )
+
     args = parser.parse_args()
 
     overrides = {k: v for k, v in vars(args).items() if v is not None}
