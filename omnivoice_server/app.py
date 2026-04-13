@@ -92,10 +92,16 @@ async def lifespan(app: FastAPI):
         if not cfg.batch_enabled:
             logger.info("Batching disabled, using single-request mode")
         else:
+            optimal_timeout = bench["optimal_batch_timeout_ms"]
+            updates = {}
             if cfg.batch_max_size == 4:  # default value, not user-set
-                cfg = cfg.model_copy(update={"batch_max_size": optimal_bs})
+                updates["batch_max_size"] = optimal_bs
+            if cfg.batch_timeout_ms == 50:  # default value, not user-set
+                updates["batch_timeout_ms"] = optimal_timeout
+            if updates:
+                cfg = cfg.model_copy(update=updates)
                 app.state.cfg = cfg
-                app.state.inference_svc.cfg = cfg
+                app.state.inference_svc._cfg = cfg
             logger.info(
                 "Batch config: max_size=%d, timeout=%dms",
                 cfg.batch_max_size, cfg.batch_timeout_ms,

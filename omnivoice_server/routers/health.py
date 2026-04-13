@@ -44,7 +44,9 @@ async def health(request: Request):
     if bench:
         result["gpu_benchmark"] = {
             "optimal_batch_size": bench["optimal_batch_size"],
+            "optimal_batch_timeout_ms": bench["optimal_batch_timeout_ms"],
             "throughput_req_s": bench["optimal_throughput_req_s"],
+            "single_request_latency_ms": bench["single_request_latency_ms"],
             "vram_used_mb": bench["vram_used_mb"],
             "vram_total_mb": bench["vram_total_mb"],
         }

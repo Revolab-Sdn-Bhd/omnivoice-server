@@ -1,8 +1,9 @@
 """
-Auto-benchmark: find optimal batch size for the current GPU at startup.
+Auto-benchmark: find optimal batch size and timeout for the current GPU.
 
 Tests increasing batch sizes with num_step=4 (fast), finds where
-throughput plateaus, returns the optimal batch_max_size.
+throughput plateaus, and derives an optimal batch_timeout_ms from
+actual compute latency.
 """
 
 from __future__ import annotations
@@ -46,16 +47,34 @@ def _run_batch(model: OmniVoice, batch_size: int, num_step: int) -> tuple[float,
     return elapsed, ok
 
 
+def _compute_optimal_timeout(single_latency_s: float) -> int:
+    """
+    Derive optimal batch_timeout_ms from single-request compute latency.
+
+    Logic: timeout = 50% of single request latency, clamped to [5, 100] ms.
+    This ensures:
+      - On fast GPUs (30ms/request): timeout ~15ms — collect requests without
+        adding much latency
+      - On slow GPUs (200ms/request): timeout ~100ms — enough to build batches
+        without being wasteful
+      - Never below 5ms (too short to catch anything)
+      - Never above 100ms (excessive latency penalty)
+    """
+    timeout_ms = round(single_latency_s * 0.5 * 1000)
+    return max(5, min(100, timeout_ms))
+
+
 def find_optimal_batch_size(model: OmniVoice) -> dict:
     """
-    Benchmark increasing batch sizes and find the optimal one.
+    Benchmark increasing batch sizes and find the optimal configuration.
 
     Returns dict with:
         optimal_batch_size: int
+        optimal_batch_timeout_ms: int
         throughput_req_s: float
         results: list of {batch_size, latency_s, throughput_req_s, vram_mb}
     """
-    logger.info("Starting GPU auto-benchmark to find optimal batch size...")
+    logger.info("Starting GPU auto-benchmark to find optimal batch config...")
 
     # Warmup for each batch size (trigger compilation)
     for bs in [1, 2, 4, 8]:
@@ -108,7 +127,12 @@ def find_optimal_batch_size(model: OmniVoice) -> dict:
 
     if not results:
         logger.warning("Benchmark failed, defaulting to batch_size=4")
-        return {"optimal_batch_size": 4, "throughput_req_s": 0.0, "results": []}
+        return {
+            "optimal_batch_size": 4,
+            "optimal_batch_timeout_ms": 50,
+            "optimal_throughput_req_s": 0.0,
+            "results": [],
+        }
 
     # Find plateau: first batch size where next gain < PLATEAU_THRESHOLD
     optimal = results[-1]  # default to largest tested
@@ -126,19 +150,28 @@ def find_optimal_batch_size(model: OmniVoice) -> dict:
             )
             break
 
+    # Derive optimal timeout from single-request latency
+    single_latency = results[0]["latency_s"]
+    timeout_ms = _compute_optimal_timeout(single_latency)
+
     vram_end = _get_vram_mb()
     summary = {
         "optimal_batch_size": optimal["batch_size"],
+        "optimal_batch_timeout_ms": timeout_ms,
         "optimal_throughput_req_s": optimal["throughput_req_s"],
+        "single_request_latency_ms": round(single_latency * 1000, 1),
         "vram_used_mb": vram_end,
         "vram_total_mb": round(torch.cuda.get_device_properties(0).total_memory / 1024 / 1024),
         "results": results,
     }
 
     logger.info(
-        "Benchmark complete: optimal batch=%d, %.1f req/s, VRAM %d/%d MB",
+        "Benchmark complete: batch=%d, timeout=%dms, %.1f req/s "
+        "(single=%.1fms), VRAM %d/%d MB",
         summary["optimal_batch_size"],
+        summary["optimal_batch_timeout_ms"],
         summary["optimal_throughput_req_s"],
+        summary["single_request_latency_ms"],
         summary["vram_used_mb"],
         summary["vram_total_mb"],
     )
