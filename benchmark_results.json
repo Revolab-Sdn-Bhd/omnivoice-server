@@ -1,0 +1,68 @@
+{
+  "num_step=32 compile=max-autotune quant=fp8wo": {
+    "label": "num_step=32 compile=max-autotune quant=fp8wo",
+    "num_step": 32,
+    "compile": "max-autotune",
+    "quantization": "fp8wo",
+    "runs": 5,
+    "wall_time": {
+      "mean": 0.2415,
+      "median": 0.2528,
+      "min": 0.1958,
+      "max": 0.2537,
+      "stdev": 0.0255
+    },
+    "audio_duration": 5.08,
+    "rtf": {
+      "mean": 0.0475,
+      "median": 0.0513,
+      "min": 0.0363,
+      "max": 0.0525
+    },
+    "peak_vram_mb": 1662.0
+  },
+  "num_step=16 compile=max-autotune quant=fp8wo": {
+    "label": "num_step=16 compile=max-autotune quant=fp8wo",
+    "num_step": 16,
+    "compile": "max-autotune",
+    "quantization": "fp8wo",
+    "runs": 5,
+    "wall_time": {
+      "mean": 0.1285,
+      "median": 0.1358,
+      "min": 0.1125,
+      "max": 0.1386,
+      "stdev": 0.0122
+    },
+    "audio_duration": 5.16,
+    "rtf": {
+      "mean": 0.0249,
+      "median": 0.0251,
+      "min": 0.022,
+      "max": 0.0271
+    },
+    "peak_vram_mb": 1662.0
+  },
+  "num_step=8 compile=max-autotune quant=fp8wo": {
+    "label": "num_step=8 compile=max-autotune quant=fp8wo",
+    "num_step": 8,
+    "compile": "max-autotune",
+    "quantization": "fp8wo",
+    "runs": 5,
+    "wall_time": {
+      "mean": 0.0733,
+      "median": 0.0804,
+      "min": 0.052,
+      "max": 0.0839,
+      "stdev": 0.0132
+    },
+    "audio_duration": 5.19,
+    "rtf": {
+      "mean": 0.0141,
+      "median": 0.0149,
+      "min": 0.0101,
+      "max": 0.0168
+    },
+    "peak_vram_mb": 1662.0
+  }
+}
