@@ -753,6 +753,38 @@ When using `stream=True`, each sentence is synthesized independently from the sa
 
 This limitation is inherent to the sentence-by-sentence streaming architecture and does not affect non-streaming synthesis.
 
+## Quantization Benchmarks
+
+Tested on NVIDIA H200 (FP16, CUDA) and CPU (FP32), `num_step=16`, 8 runs per mode.
+No `torch.compile` — raw quantization comparison only.
+
+### GPU (NVIDIA H200, FP16)
+
+| Mode | Latency | Throughput | VRAM | Audio Quality |
+|------|---------|-----------|------|---------------|
+| **none** | **0.367s** | **2.7 req/s** | 2,482 MB | Clean |
+| fp8wo | 0.542s | 1.8 req/s | 2,124 MB | Clean |
+| fp8dq | 1.243s | 0.8 req/s | 2,110 MB | Clean |
+| int8wo | 0.438s | 2.3 req/s | 2,082 MB | Degraded |
+| int8dq | 5.450s | 0.2 req/s | 2,078 MB | Degraded |
+
+### CPU (FP32)
+
+| Mode | Latency | Throughput | RAM | Audio Quality |
+|------|---------|-----------|-----|---------------|
+| **none** | 5.804s | 0.17 req/s | 2,101 MB | Clean |
+| int8wo | 6.046s | 0.17 req/s | 2,151 MB | Degraded |
+| **int8dq** | **4.538s** | **0.22 req/s** | 2,213 MB | Degraded |
+
+### Key Findings
+
+- **GPU**: No quantization mode improves over baseline FP16. The H200's FP16 tensor cores are already optimal. INT8 modes degrade audio quality and are slower.
+- **CPU**: `int8dq` gives a 22% speedup over baseline (4.5s vs 5.8s) but audio quality is degraded.
+- **VRAM savings are negligible** (~400 MB) because the model is only ~2 GB — irrelevant on GPUs with 80-143 GB VRAM.
+- **Quantization is for large models** (7B+ parameters) where VRAM is the bottleneck. For OmniVoice's 0.6B LLM backbone, it provides no benefit.
+
+**Recommendation**: Use `--quantization none` (default). Only consider quantization on memory-constrained hardware (consumer GPUs < 8 GB VRAM).
+
 ## Documentation
 
 Comprehensive technical documentation is available in the `docs/` directory:
