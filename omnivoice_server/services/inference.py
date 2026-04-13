@@ -337,9 +337,9 @@ class InferenceService:
                     future.set_exception(e)
 
     async def _synthesize_direct(self, req: SynthesisRequest) -> SynthesisResult:
-        """Direct inference (multi-worker mode). Each worker handles one request at a time."""
+        """Direct inference. Uses dedicated executor if available for CUDA graph affinity."""
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._run_sync, req)
+        return await loop.run_in_executor(self._executor, self._run_sync, req)
 
     async def _synthesize_threaded(self, req: SynthesisRequest) -> SynthesisResult:
         """Threaded inference with semaphore (single-worker fallback mode)."""
