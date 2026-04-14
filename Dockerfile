@@ -1,5 +1,5 @@
 # Multi-stage: builder with CUDA toolkit, runtime slim
-FROM pytorch/pytorch:2.7.0-cuda12.8-cudnn9-devel AS builder
+FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel AS builder
 
 WORKDIR /build
 
@@ -14,7 +14,7 @@ COPY omnivoice_server/ omnivoice_server/
 RUN uv sync --frozen --no-dev
 
 # --- Runtime stage ---
-FROM pytorch/pytorch:2.7.0-cuda12.8-cudnn9-runtime
+FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime
 
 WORKDIR /app
 
