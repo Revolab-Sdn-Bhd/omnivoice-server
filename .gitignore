@@ -45,3 +45,9 @@ tmp*.py
 
 # Torch compile cache (generated, not versioned)
 torch_compile_cache/
+
+# Benchmark archives (large wav files, run locally)
+bench_archive/
+
+# Generated repo analysis
+REPO_ANALYSIS/

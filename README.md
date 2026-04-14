@@ -649,31 +649,52 @@ GitHub Actions workflow runs on every push:
 
 ### Device Comparison
 
-| Device | Audio Quality | Speed (RTF) | Status |
-|--------|---------------|-------------|--------|
-| CPU | ✅ Excellent | 4.92 (slow) | Use for dev |
-| MPS (Apple Silicon) | ❌ Broken | N/A | Do not use |
-| CUDA (NVIDIA GPU) | ✅ Excellent | ~0.2 (fast) | Use for prod |
+| Device | Best Latency (step=16) | Speedup vs CPU baseline | Status |
+|--------|----------------------|------------------------|--------|
+| CUDA + compile max-autotune | **99ms** | **51x** | Use for prod |
+| CPU + OpenVINO + int8dq | **4.43s** | **1.15x** | Use for dev |
+| MPS (Apple Silicon) | N/A | N/A | Do not use |
 
-**Note**: Default device is now `cpu` due to MPS issues. See [`docs/verification/MPS_ISSUE.md`](./docs/verification/MPS_ISSUE.md) for technical details.
+**Note**: Default device is `cpu` due to MPS issues. See [`docs/verification/MPS_ISSUE.md`](./docs/verification/MPS_ISSUE.md) for details.
 
 ## Performance
 
-**Verified benchmark results (CPU, num_step=32):**
+All results verified with 8 timed runs, 3 warmup, `torch.cuda.synchronize()` for GPU.
 
-| Metric | Value |
-|--------|-------|
-| Latency | 10.2 seconds per voice |
-| RTF (Real-Time Factor) | 4.92 |
-| Memory | Stable, no leaks |
+### GPU (NVIDIA H200, FP16) — `torch.compile` Triton fusion
 
-**Expected performance on different hardware:**
+| Config | step=4 | step=8 | step=16 |
+|--------|--------|--------|---------|
+| **compile max-autotune** | **41ms** | **61ms** | **99ms** |
+| compile default | 46ms | 73ms | 193ms |
+| compile + int8dq max | 72ms | 73ms | 121ms |
+| compile + int8dq | 62ms | 115ms | 196ms |
+| baseline (no compile) | 94ms | 283ms | 320ms |
+| int8dq alone | 1,364ms | 2,642ms | 5,483ms |
 
-| Hardware | num_step | Latency (short text) | RTF |
-|----------|----------|---------------------|-----|
-| CPU (Intel i7) | 32 | ~10s | 4.92 |
-| GPU (RTX 3090) | 32 | ~0.5s | ~0.2 |
-| Apple M1 Max (MPS) | 32 | ❌ Broken audio | N/A |
+`torch.compile(model.llm, mode="max-autotune")` generates optimized Triton kernels — up to **4.64x faster** than baseline. int8dq on GPU is catastrophic (H200 FP16 tensor cores are already optimal).
+
+### CPU (Dual Xeon 6515P, FP32) — best configs
+
+| Config | step=4 | step=8 | step=16 |
+|--------|--------|--------|---------|
+| **OpenVINO + int8dq (t32)** | **0.98s** | **1.66s** | **4.43s** |
+| int8dq (t32) | 1.34s | 2.16s | 4.65s |
+| OpenVINO (t32) | 1.17s | 2.35s | 5.15s |
+| compile + int8dq (t24) | 1.14s | 2.94s | 5.67s |
+| baseline | 1.59s | 2.81s | 5.09s |
+
+OpenVINO + torchao int8dq is the fastest CPU config across all step counts (1.15-1.69x). `torch.compile` alone is counterproductive on CPU without quantization.
+
+### Approaches that didn't work
+
+| Approach | Status | Why |
+|----------|--------|-----|
+| torchao int8dq on GPU | ❌ 17x slower | H200 FP16 tensor cores already optimal |
+| torch.compile alone on CPU | ❌ 0.58x | Overhead without quantization hurts |
+| ONNX Runtime | ❌ Export failed | Qwen3 dynamic masking incompatible with tracing |
+| Intel IPEX | ❌ Incompatible | Requires PyTorch 2.8, we have 2.11 |
+| llama.cpp GGUF | ❌ Incompatible | OmniVoice uses iterative masked diffusion, not autoregressive |
 
 Streaming mode reduces perceived latency by sending audio as soon as the first sentence is ready.
 
@@ -752,38 +773,6 @@ When using `stream=True`, each sentence is synthesized independently from the sa
    ```
 
 This limitation is inherent to the sentence-by-sentence streaming architecture and does not affect non-streaming synthesis.
-
-## Quantization Benchmarks
-
-Tested on NVIDIA H200 (FP16, CUDA) and CPU (FP32), `num_step=16`, 8 runs per mode.
-No `torch.compile` — raw quantization comparison only.
-
-### GPU (NVIDIA H200, FP16)
-
-| Mode | Latency | Throughput | VRAM | Audio Quality |
-|------|---------|-----------|------|---------------|
-| **none** | **0.367s** | **2.7 req/s** | 2,482 MB | Clean |
-| fp8wo | 0.542s | 1.8 req/s | 2,124 MB | Clean |
-| fp8dq | 1.243s | 0.8 req/s | 2,110 MB | Clean |
-| int8wo | 0.438s | 2.3 req/s | 2,082 MB | Degraded |
-| int8dq | 5.450s | 0.2 req/s | 2,078 MB | Degraded |
-
-### CPU (FP32)
-
-| Mode | Latency | Throughput | RAM | Audio Quality |
-|------|---------|-----------|-----|---------------|
-| **none** | 5.804s | 0.17 req/s | 2,101 MB | Clean |
-| int8wo | 6.046s | 0.17 req/s | 2,151 MB | Degraded |
-| **int8dq** | **4.538s** | **0.22 req/s** | 2,213 MB | Degraded |
-
-### Key Findings
-
-- **GPU**: No quantization mode improves over baseline FP16. The H200's FP16 tensor cores are already optimal. INT8 modes degrade audio quality and are slower.
-- **CPU**: `int8dq` gives a 22% speedup over baseline (4.5s vs 5.8s) but audio quality is degraded.
-- **VRAM savings are negligible** (~400 MB) because the model is only ~2 GB — irrelevant on GPUs with 80-143 GB VRAM.
-- **Quantization is for large models** (7B+ parameters) where VRAM is the bottleneck. For OmniVoice's 0.6B LLM backbone, it provides no benefit.
-
-**Recommendation**: Use `--quantization none` (default). Only consider quantization on memory-constrained hardware (consumer GPUs < 8 GB VRAM).
 
 ## Documentation
 
