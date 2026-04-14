@@ -35,6 +35,8 @@ textarea{min-height:80px}
 .player{margin-top:16px}
 .player audio{width:100%;border-radius:8px;margin-top:8px}
 .player .meta{display:flex;justify-content:space-between;font-size:12px;color:#525252;margin-top:6px}
+.ref-player{margin-top:12px}
+.ref-player audio{width:100%;border-radius:8px;margin-top:4px;height:36px}
 .error{background:#450a0a;border:1px solid #7f1d1d;border-radius:8px;padding:12px;color:#fca5a5;font-size:13px;margin-top:12px}
 .spinner{display:inline-block;width:16px;height:16px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:8px}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -75,15 +77,34 @@ textarea{min-height:80px}
   <div id="clone-panel" class="tab-content">
     <div class="card">
       <h2>Reference Audio</h2>
-      <div class="upload-zone" id="upload-zone">
-        <input type="file" id="ref-audio" accept="audio/*">
-        <div class="icon">+</div>
-        <div class="label">Drop or click to upload reference audio</div>
-        <div class="filename" id="ref-filename"></div>
+      <div class="presets" style="margin-bottom:12px">
+        <div class="preset-btn active" id="preset-anwar" onclick="selectRefSource('anwar')">Anwar</div>
+        <div class="preset-btn" id="preset-custom" onclick="selectRefSource('custom')">Custom Upload</div>
       </div>
+
+      <!-- Anwar preset -->
+      <div id="anwar-panel">
+        <div class="ref-player">
+          <audio id="anwar-player" controls src="/static/anwar.wav"></audio>
+        </div>
+      </div>
+
+      <!-- Custom upload -->
+      <div id="custom-upload" style="display:none">
+        <div class="upload-zone" id="upload-zone">
+          <input type="file" id="ref-audio" accept="audio/*">
+          <div class="icon">+</div>
+          <div class="label">Drop or click to upload reference audio</div>
+          <div class="filename" id="ref-filename"></div>
+        </div>
+        <div class="ref-player" id="custom-player-wrap" style="display:none">
+          <audio id="custom-player" controls></audio>
+        </div>
+      </div>
+
       <div style="margin-top:12px">
         <label for="ref-text">Reference transcript (required)</label>
-        <input type="text" id="ref-text" placeholder="Type what was said in the reference audio" required>
+        <input type="text" id="ref-text" value="terima kasih di atas kesempatan ini, dan seperti mana yang kita ikuti" placeholder="Type what was said in the reference audio" required>
       </div>
     </div>
   </div>
@@ -154,6 +175,7 @@ const PRESETS = [
 ];
 let currentMode = 'design';
 let selectedPreset = 'alloy';
+let refSource = 'anwar'; // 'anwar' or 'custom'
 
 // Build preset buttons
 const presetsEl = document.getElementById('presets');
@@ -162,7 +184,7 @@ PRESETS.forEach(p => {
   btn.className = 'preset-btn' + (p === selectedPreset ? ' active' : '');
   btn.textContent = p;
   btn.onclick = () => {
-    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#presets .preset-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     selectedPreset = p;
   };
@@ -180,13 +202,26 @@ document.querySelectorAll('.tab').forEach(tab => {
   };
 });
 
-// File upload
-const refAudio = document.getElementById('ref-audio');
+// Ref audio source switching
+function selectRefSource(src) {
+  refSource = src;
+  document.getElementById('preset-anwar').classList.toggle('active', src === 'anwar');
+  document.getElementById('preset-custom').classList.toggle('active', src === 'custom');
+  document.getElementById('anwar-panel').style.display = src === 'anwar' ? 'block' : 'none';
+  document.getElementById('custom-upload').style.display = src === 'custom' ? 'block' : 'none';
+}
+
+// Custom file upload
+const refAudioInput = document.getElementById('ref-audio');
 const uploadZone = document.getElementById('upload-zone');
-refAudio.onchange = () => {
-  if (refAudio.files.length) {
+refAudioInput.onchange = () => {
+  if (refAudioInput.files.length) {
     uploadZone.classList.add('has-file');
-    document.getElementById('ref-filename').textContent = refAudio.files[0].name;
+    document.getElementById('ref-filename').textContent = refAudioInput.files[0].name;
+    // Play custom audio
+    const url = URL.createObjectURL(refAudioInput.files[0]);
+    document.getElementById('custom-player').src = url;
+    document.getElementById('custom-player-wrap').style.display = 'block';
   }
 };
 
@@ -210,16 +245,25 @@ async function generate() {
 
     if (!text) throw new Error('Please enter some text');
 
+    const refText = document.getElementById('ref-text').value.trim();
+    if (!refText) throw new Error('Please enter the reference transcript');
+
     if (currentMode === 'clone') {
-      if (!refAudio.files.length) throw new Error('Please upload reference audio for voice cloning');
-      if (!document.getElementById('ref-text').value.trim()) throw new Error('Please enter the reference transcript');
       const formData = new FormData();
       formData.append('text', text);
-      formData.append('ref_audio', refAudio.files[0]);
-      const refText = document.getElementById('ref-text').value.trim();
-      if (refText) formData.append('ref_text', refText);
+      formData.append('ref_text', refText);
       formData.append('speed', speed);
       formData.append('num_step', numStep);
+
+      if (refSource === 'anwar') {
+        // Fetch preset file and attach
+        const resp = await fetch('/static/anwar.wav');
+        const blob = await resp.blob();
+        formData.append('ref_audio', blob, 'anwar.wav');
+      } else {
+        if (!refAudioInput.files.length) throw new Error('Please upload reference audio');
+        formData.append('ref_audio', refAudioInput.files[0]);
+      }
 
       response = await fetch('/v1/audio/speech/clone', { method: 'POST', body: formData });
     } else {
@@ -256,7 +300,7 @@ async function generate() {
     document.getElementById('download-link').download = `speech.${ext}`;
 
     const sizeKB = (blob.size / 1024).toFixed(0);
-    const dur = audioEl.addEventListener('loadedmetadata', () => {
+    audioEl.addEventListener('loadedmetadata', () => {
       document.getElementById('audio-meta').textContent = `${audioEl.duration.toFixed(1)}s · ${sizeKB} KB · ${fmt.toUpperCase()}`;
     });
 
