@@ -15,7 +15,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
 from .routers import health, models, speech, voices
@@ -220,7 +221,8 @@ def create_app(cfg: Settings) -> FastAPI:
             if request.url.path in (
                 "/health", "/live", "/ready",
                 "/metrics", "/metrics/prometheus", "/v1/models",
-            ):
+                "/", "/static/index.html",
+            ) or request.url.path.startswith("/static/"):
                 return await call_next(request)
             auth = request.headers.get("Authorization", "")
             if auth != f"Bearer {cfg.api_key}":
@@ -262,5 +264,15 @@ def create_app(cfg: Settings) -> FastAPI:
     app.include_router(voices.router, prefix="/v1")
     app.include_router(models.router, prefix="/v1")
     app.include_router(health.router)
+
+    # ── Frontend ──────────────────────────────────────────────────────────────
+    import pathlib
+    static_dir = pathlib.Path(__file__).parent / "static"
+    if static_dir.is_dir():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    async def frontend():
+        return (static_dir / "index.html").read_text()
 
     return app

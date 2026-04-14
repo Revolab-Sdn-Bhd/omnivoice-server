@@ -224,6 +224,17 @@ OpenAI-compatible preset names: `alloy`, `ash`, `ballad`, `cedar`, `coral`, `ech
 
 Custom voices via `instructions` field: `"female, british accent, young adult, high pitch"`.
 
+## Web UI
+
+The server includes a built-in frontend at `http://HOST:8880/`. It provides:
+
+- Voice presets (alloy, nova, echo, etc.) or custom instructions
+- Voice cloning from uploaded reference audio
+- Text input with quality/speed/format controls
+- Built-in audio player with download
+
+No extra setup needed — served automatically by the FastAPI server.
+
 ## Monitoring
 
 - **Prometheus**: `GET /metrics/prometheus` — counters, gauges, histograms

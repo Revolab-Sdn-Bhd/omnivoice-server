@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OmniVoice TTS</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e5e5e5;min-height:100vh}
+.container{max-width:800px;margin:0 auto;padding:24px 16px}
+h1{font-size:24px;font-weight:600;margin-bottom:4px}
+.subtitle{color:#737373;font-size:14px;margin-bottom:32px}
+.card{background:#141414;border:1px solid #262626;border-radius:12px;padding:20px;margin-bottom:16px}
+.card h2{font-size:14px;font-weight:600;color:#a3a3a3;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:16px}
+label{display:block;font-size:13px;color:#a3a3a3;margin-bottom:6px}
+textarea,input[type=text],select{width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;color:#e5e5e5;padding:10px 12px;font-size:14px;font-family:inherit;resize:vertical}
+textarea:focus,input[type=text]:focus,select:focus{outline:none;border-color:#3b82f6}
+textarea{min-height:80px}
+.row{display:flex;gap:12px}
+.row > *{flex:1}
+.presets{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.preset-btn{background:#1a1a1a;border:1px solid #333;border-radius:20px;color:#a3a3a3;padding:6px 14px;font-size:12px;cursor:pointer;transition:all .15s}
+.preset-btn:hover{border-color:#3b82f6;color:#e5e5e5}
+.preset-btn.active{background:#3b82f6;border-color:#3b82f6;color:#fff}
+.upload-zone{border:2px dashed #333;border-radius:8px;padding:24px;text-align:center;cursor:pointer;transition:all .15s;position:relative}
+.upload-zone:hover{border-color:#3b82f6}
+.upload-zone.has-file{border-color:#22c55e;border-style:solid}
+.upload-zone input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.upload-zone .icon{font-size:24px;margin-bottom:8px}
+.upload-zone .label{font-size:13px;color:#737373}
+.upload-zone .filename{font-size:13px;color:#22c55e;margin-top:4px}
+.generate-btn{width:100%;background:#3b82f6;border:none;border-radius:8px;color:#fff;padding:14px;font-size:15px;font-weight:600;cursor:pointer;transition:background .15s;margin-top:8px}
+.generate-btn:hover{background:#2563eb}
+.generate-btn:disabled{background:#262626;color:#525252;cursor:not-allowed}
+.player{margin-top:16px}
+.player audio{width:100%;border-radius:8px;margin-top:8px}
+.player .meta{display:flex;justify-content:space-between;font-size:12px;color:#525252;margin-top:6px}
+.error{background:#450a0a;border:1px solid #7f1d1d;border-radius:8px;padding:12px;color:#fca5a5;font-size:13px;margin-top:12px}
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.tabs{display:flex;gap:0;margin-bottom:16px}
+.tab{flex:1;background:#1a1a1a;border:1px solid #333;padding:10px;text-align:center;font-size:13px;font-weight:500;cursor:pointer;color:#a3a3a3;transition:all .15s}
+.tab:first-child{border-radius:8px 0 0 8px}
+.tab:last-child{border-radius:0 8px 8px 0}
+.tab.active{background:#3b82f6;border-color:#3b82f6;color:#fff}
+.tab-content{display:none}
+.tab-content.active{display:block}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>OmniVoice TTS</h1>
+  <p class="subtitle">Text-to-speech with voice cloning</p>
+
+  <!-- Mode tabs -->
+  <div class="tabs">
+    <div class="tab active" data-mode="design">Voice Design</div>
+    <div class="tab" data-mode="clone">Voice Clone</div>
+  </div>
+
+  <!-- Design mode -->
+  <div id="design-panel" class="tab-content active">
+    <div class="card">
+      <h2>Voice Preset</h2>
+      <div class="presets" id="presets"></div>
+    </div>
+    <div class="card">
+      <h2>Custom Instructions</h2>
+      <label for="instructions">Override preset with custom attributes</label>
+      <input type="text" id="instructions" placeholder="female, british accent, young adult, high pitch">
+    </div>
+  </div>
+
+  <!-- Clone mode -->
+  <div id="clone-panel" class="tab-content">
+    <div class="card">
+      <h2>Reference Audio</h2>
+      <div class="upload-zone" id="upload-zone">
+        <input type="file" id="ref-audio" accept="audio/*">
+        <div class="icon">+</div>
+        <div class="label">Drop or click to upload reference audio</div>
+        <div class="filename" id="ref-filename"></div>
+      </div>
+      <div style="margin-top:12px">
+        <label for="ref-text">Reference transcript (optional)</label>
+        <input type="text" id="ref-text" placeholder="What was said in the reference audio">
+      </div>
+    </div>
+  </div>
+
+  <!-- Text input -->
+  <div class="card">
+    <h2>Text to Synthesize</h2>
+    <textarea id="text-input" placeholder="Enter the text you want to convert to speech..." rows="4">Hello, this is a test of the OmniVoice text-to-speech system. The quick brown fox jumps over the lazy dog.</textarea>
+  </div>
+
+  <!-- Settings -->
+  <div class="card">
+    <h2>Settings</h2>
+    <div class="row">
+      <div>
+        <label for="num-step">Quality (steps)</label>
+        <select id="num-step">
+          <option value="4">Fast (4)</option>
+          <option value="8">Good (8)</option>
+          <option value="16" selected>High (16)</option>
+          <option value="32">Best (32)</option>
+        </select>
+      </div>
+      <div>
+        <label for="speed">Speed</label>
+        <select id="speed">
+          <option value="0.5">0.5x</option>
+          <option value="0.75">0.75x</option>
+          <option value="1.0" selected>1.0x</option>
+          <option value="1.25">1.25x</option>
+          <option value="1.5">1.5x</option>
+          <option value="2.0">2.0x</option>
+        </select>
+      </div>
+      <div>
+        <label for="format">Format</label>
+        <select id="format">
+          <option value="wav" selected>WAV</option>
+          <option value="mp3">MP3</option>
+          <option value="opus">Opus</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generate -->
+  <button class="generate-btn" id="generate-btn" onclick="generate()">
+    Generate Speech
+  </button>
+
+  <div id="error-box"></div>
+
+  <!-- Player -->
+  <div class="player card" id="player" style="display:none">
+    <h2>Result</h2>
+    <audio id="audio-player" controls></audio>
+    <div class="meta">
+      <span id="audio-meta"></span>
+      <a id="download-link" download="speech.wav">Download</a>
+    </div>
+  </div>
+</div>
+
+<script>
+const PRESETS = [
+  'alloy','ash','ballad','cedar','coral','echo',
+  'fable','marin','nova','onyx','sage','shimmer','verse'
+];
+let currentMode = 'design';
+let selectedPreset = 'alloy';
+
+// Build preset buttons
+const presetsEl = document.getElementById('presets');
+PRESETS.forEach(p => {
+  const btn = document.createElement('div');
+  btn.className = 'preset-btn' + (p === selectedPreset ? ' active' : '');
+  btn.textContent = p;
+  btn.onclick = () => {
+    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedPreset = p;
+  };
+  presetsEl.appendChild(btn);
+});
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentMode = tab.dataset.mode;
+    document.getElementById(currentMode + '-panel').classList.add('active');
+  };
+});
+
+// File upload
+const refAudio = document.getElementById('ref-audio');
+const uploadZone = document.getElementById('upload-zone');
+refAudio.onchange = () => {
+  if (refAudio.files.length) {
+    uploadZone.classList.add('has-file');
+    document.getElementById('ref-filename').textContent = refAudio.files[0].name;
+  }
+};
+
+async function generate() {
+  const btn = document.getElementById('generate-btn');
+  const errorBox = document.getElementById('error-box');
+  const player = document.getElementById('player');
+  const audioEl = document.getElementById('audio-player');
+
+  errorBox.innerHTML = '';
+  player.style.display = 'none';
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Generating...';
+
+  try {
+    let response;
+    const text = document.getElementById('text-input').value.trim();
+    const numStep = parseInt(document.getElementById('num-step').value);
+    const speed = parseFloat(document.getElementById('speed').value);
+    const fmt = document.getElementById('format').value;
+
+    if (!text) throw new Error('Please enter some text');
+
+    if (currentMode === 'clone') {
+      if (!refAudio.files.length) throw new Error('Please upload reference audio for voice cloning');
+      const formData = new FormData();
+      formData.append('text', text);
+      formData.append('ref_audio', refAudio.files[0]);
+      const refText = document.getElementById('ref-text').value.trim();
+      if (refText) formData.append('ref_text', refText);
+      formData.append('speed', speed);
+      formData.append('num_step', numStep);
+
+      response = await fetch('/v1/audio/speech/clone', { method: 'POST', body: formData });
+    } else {
+      const body = {
+        model: 'omnivoice',
+        input: text,
+        voice: selectedPreset,
+        response_format: fmt,
+        speed: speed,
+        num_step: numStep,
+      };
+      const instructions = document.getElementById('instructions').value.trim();
+      if (instructions) body.instructions = instructions;
+
+      response = await fetch('/v1/audio/speech', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    }
+
+    if (!response.ok) {
+      let detail = `HTTP ${response.status}`;
+      try { const err = await response.json(); detail = err.error?.message || err.detail || detail; } catch {}
+      throw new Error(detail);
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    audioEl.src = url;
+
+    const ext = fmt === 'opus' ? 'ogg' : (fmt === 'mp3' ? 'mp3' : 'wav');
+    document.getElementById('download-link').href = url;
+    document.getElementById('download-link').download = `speech.${ext}`;
+
+    const sizeKB = (blob.size / 1024).toFixed(0);
+    const dur = audioEl.addEventListener('loadedmetadata', () => {
+      document.getElementById('audio-meta').textContent = `${audioEl.duration.toFixed(1)}s · ${sizeKB} KB · ${fmt.toUpperCase()}`;
+    });
+
+    player.style.display = 'block';
+    audioEl.play().catch(() => {});
+  } catch (e) {
+    errorBox.innerHTML = `<div class="error">${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = 'Generate Speech';
+  }
+}
+</script>
+</body>
+</html>
