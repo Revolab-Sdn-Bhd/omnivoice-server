@@ -185,7 +185,7 @@ def _auto_register_voice_samples(profile_svc: ProfileService) -> None:
 
     audio_files = sorted(
         f for f in samples_dir.iterdir()
-        if f.suffix.lower() in (".wav", ".mp3")
+        if f.suffix.lower() in (".wav", ".mp3", ".m4a")
     )
 
     for audio in audio_files:
