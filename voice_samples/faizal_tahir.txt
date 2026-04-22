@@ -1,2 +1,0 @@
-# TODO: listen to faizal_tahir.wav and fill in the exact transcript
-# Then run: scripts/scrape_voices.py --register-all

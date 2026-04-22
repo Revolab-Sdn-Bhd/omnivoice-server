@@ -1,2 +1,0 @@
-# TODO: listen to dayang_nurfaizah.wav and fill in the exact transcript
-# Then run: scripts/scrape_voices.py --register-all
