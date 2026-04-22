@@ -72,6 +72,9 @@ class ResponseCache:
                 meta_tmp = meta_path.with_suffix(".mtmp")
                 meta_tmp.write_text(json.dumps(metadata))
                 meta_tmp.replace(meta_path)
+            if metadata and "text" in metadata:
+                txt_path = self._dir / f"{key}.txt"
+                txt_path.write_text(metadata["text"], encoding="utf-8")
             logger.debug("Cache put: %s (%d bytes)", key[:12], len(data))
         except OSError as e:
             logger.warning("Cache write failed: %s", e)
@@ -96,9 +99,10 @@ class ResponseCache:
             try:
                 size = f.stat().st_size
                 f.unlink()
-                meta = f.with_suffix(".meta")
-                if meta.exists():
-                    meta.unlink()
+                for ext in (".meta", ".txt"):
+                    companion = f.with_suffix(ext)
+                    if companion.exists():
+                        companion.unlink()
                 total -= size
             except OSError:
                 pass

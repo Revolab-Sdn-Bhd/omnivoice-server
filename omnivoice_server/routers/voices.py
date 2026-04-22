@@ -117,12 +117,14 @@ async def create_profile(
         description="Unique identifier. Alphanumeric, dashes, underscores only.",
     ),
     ref_audio: UploadFile = File(...),
-    ref_text: str | None = Form(default=None),
+    ref_text: str = Form(..., description="Transcript of the reference audio. Required."),
     overwrite: bool = Form(default=False),
     profile_svc: ProfileService = Depends(_get_profiles),
 ):
     """
     Save a voice cloning profile.
+    ref_text must be the exact transcript of the uploaded audio — it is used
+    to condition the speaker embedding.
     Use /v1/audio/speech/clone for synthesis with reference audio uploads.
     """
     from ..utils.audio import read_upload_bounded, validate_audio_bytes
@@ -217,6 +219,12 @@ async def update_profile(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Provide at least one of: ref_audio, ref_text",
+        )
+
+    if ref_audio is not None and ref_text is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="ref_text is required when updating ref_audio — provide the transcript of the new audio.",
         )
 
     if ref_audio is not None:

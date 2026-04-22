@@ -6,9 +6,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import tempfile
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -25,6 +27,68 @@ from ..voice_presets import DEFAULT_DESIGN_INSTRUCTIONS, OPENAI_VOICE_PRESETS
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _write_trace(
+    trace_dir: Path,
+    audio_bytes: bytes,
+    ext: str,
+    meta: dict,
+) -> None:
+    """Write audio + JSON sidecar to trace_dir. Non-fatal on error."""
+    try:
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")[:22]
+        stem = trace_dir / ts
+        stem.with_suffix(f".{ext}").write_bytes(audio_bytes)
+        stem.with_suffix(".json").write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        logger.debug("Trace written: %s", stem.name)
+    except OSError as e:
+        logger.warning("Trace write failed: %s", e)
+
+
+def _build_trace_meta(
+    *,
+    request: "Request",
+    cfg,
+    text: str,
+    voice: str | None,
+    profile_id: str | None,
+    mode: str,
+    instruct: str | None,
+    ref_text: str | None,
+    latency_s: float,
+    duration_s: float,
+    num_step: int,
+    guidance_scale: float,
+    speed: float,
+    fmt: str,
+    audio_size_bytes: int,
+) -> dict:
+    rtf = round(latency_s / duration_s, 4) if duration_s > 0 else None
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "request_id": request.headers.get("X-Request-ID", ""),
+        "text": text,
+        "text_chars": len(text),
+        "voice": voice,
+        "profile_id": profile_id,
+        "mode": mode,
+        "instruct": instruct,
+        "ref_text": ref_text,
+        "latency_s": round(latency_s, 3),
+        "duration_s": round(duration_s, 3),
+        "rtf": rtf,
+        "num_step": num_step,
+        "guidance_scale": guidance_scale,
+        "speed": speed,
+        "format": fmt,
+        "audio_size_bytes": audio_size_bytes,
+        "device": cfg.device,
+        "model_id": cfg.model_id,
+    }
 
 
 ACCEPT_FORMAT_MAP: dict[str, str] = {
@@ -67,7 +131,7 @@ class SpeechRequest(BaseModel):
     )
     speed: float = Field(default=1.0, ge=0.25, le=4.0)
     stream: bool = Field(default=False)
-    num_step: int | None = Field(default=None, ge=1, le=64)
+    num_step: int | None = Field(default=None, ge=8, le=32)
     guidance_scale: float | None = Field(default=None, ge=0.0, le=10.0)
     denoise: bool | None = Field(default=None)
     t_shift: float | None = Field(default=None, ge=0.0, le=2.0)
@@ -110,23 +174,36 @@ def _get_cfg(request: Request):
 def _resolve_synthesis_mode(
     body: SpeechRequest,
     profile_svc: ProfileService,
-) -> tuple[str, str | None, str | None, str | None]:
-    """Resolve synthesis mode for /v1/audio/speech."""
-    del profile_svc
+) -> tuple[str, str | None, str | None, str | None, str | None]:
+    """Resolve synthesis mode. Returns (mode, instruct, ref_audio_path, ref_text, profile_id)."""
+    from ..services.profiles import ProfileNotFoundError
+
     instructions = body.instructions.strip() if body.instructions else None
     speaker = body.speaker.strip().lower() if body.speaker else None
     voice = body.voice.strip().lower() if body.voice else None
 
     if instructions:
-        return "design", instructions, None, None
+        return "design", instructions, None, None, None
 
-    if speaker and speaker in OPENAI_VOICE_PRESETS:
-        return "design", OPENAI_VOICE_PRESETS[speaker], None, None
+    candidate = speaker or voice
 
-    if voice and voice in OPENAI_VOICE_PRESETS:
-        return "design", OPENAI_VOICE_PRESETS[voice], None, None
+    if candidate and candidate in OPENAI_VOICE_PRESETS:
+        return "design", OPENAI_VOICE_PRESETS[candidate], None, None, None
 
-    return "design", DEFAULT_DESIGN_INSTRUCTIONS, None, None
+    # Strip "clone:" prefix for backwards compatibility with list_voices IDs
+    profile_id = candidate
+    if profile_id and profile_id.startswith("clone:"):
+        profile_id = profile_id[6:]
+
+    if profile_id:
+        try:
+            ref_audio_path = str(profile_svc.get_ref_audio_path(profile_id))
+            ref_text = profile_svc.get_ref_text(profile_id)
+            return "clone", None, ref_audio_path, ref_text, profile_id
+        except ProfileNotFoundError:
+            pass
+
+    return "design", DEFAULT_DESIGN_INSTRUCTIONS, None, None, None
 
 
 @router.post(
@@ -194,7 +271,13 @@ async def create_speech(
 ):
     """Generate speech from text."""
     fmt = _resolve_format(body.response_format, request.headers.get("Accept"))
-    mode, instruct, ref_audio_path, ref_text = _resolve_synthesis_mode(body, profile_svc)
+    mode, instruct, ref_audio_path, ref_text, profile_id = _resolve_synthesis_mode(
+        body, profile_svc
+    )
+
+    embedding_cache_path = (
+        str(profile_svc.get_embedding_cache_path(profile_id)) if profile_id else None
+    )
 
     req = SynthesisRequest(
         text=body.input,
@@ -202,6 +285,7 @@ async def create_speech(
         instruct=instruct,
         ref_audio_path=ref_audio_path,
         ref_text=ref_text,
+        embedding_cache_path=embedding_cache_path,
         speed=body.speed,
         num_step=body.num_step,
         guidance_scale=body.guidance_scale,
@@ -235,6 +319,7 @@ async def create_speech(
             text=body.input,
             mode=mode,
             instruct=instruct,
+            profile_id=profile_id,
             speed=body.speed,
             num_step=body.num_step or cfg.num_step,
             guidance_scale=(
@@ -310,7 +395,28 @@ async def create_speech(
         cache.put(cache_key, audio_bytes, {
             "media_type": media_type,
             "duration_s": result.duration_s,
+            "text": body.input,
         })
+
+    # Trace
+    if cfg.trace_dir:
+        _write_trace(cfg.trace_dir, audio_bytes, fmt, _build_trace_meta(
+            request=request,
+            cfg=cfg,
+            text=body.input,
+            voice=body.voice,
+            profile_id=profile_id,
+            mode=mode,
+            instruct=instruct,
+            ref_text=ref_text,
+            latency_s=result.latency_s,
+            duration_s=result.duration_s,
+            num_step=body.num_step or cfg.num_step,
+            guidance_scale=body.guidance_scale if body.guidance_scale is not None else cfg.guidance_scale,
+            speed=body.speed,
+            fmt=fmt,
+            audio_size_bytes=len(audio_bytes),
+        ))
 
     return Response(
         content=audio_bytes,
@@ -342,6 +448,7 @@ async def _stream_sentences(
             instruct=base_req.instruct,
             ref_audio_path=base_req.ref_audio_path,
             ref_text=base_req.ref_text,
+            embedding_cache_path=base_req.embedding_cache_path,
             speed=base_req.speed,
             num_step=base_req.num_step,
             guidance_scale=base_req.guidance_scale,
@@ -399,7 +506,7 @@ async def create_speech_clone(
     request: Request,
     text: str = Form(..., min_length=1, max_length=10_000),
     ref_audio: UploadFile = File(...),
-    ref_text: str | None = Form(default=None),
+    ref_text: str = Form(..., description="Transcript of the reference audio. Required."),
     speed: float = Form(default=1.0, ge=0.25, le=4.0),
     num_step: int | None = Form(default=None, ge=1, le=64),
     guidance_scale: float | None = Form(default=None, ge=0.0, le=10.0),
@@ -490,6 +597,26 @@ async def create_speech_clone(
             )
 
         audio_out, media_type = encode_tensors(result.tensors, "wav")
+
+        if cfg.trace_dir:
+            _write_trace(cfg.trace_dir, audio_out, "wav", _build_trace_meta(
+                request=request,
+                cfg=cfg,
+                text=text,
+                voice=None,
+                profile_id=None,
+                mode="clone",
+                instruct=None,
+                ref_text=ref_text,
+                latency_s=result.latency_s,
+                duration_s=result.duration_s,
+                num_step=num_step or cfg.num_step,
+                guidance_scale=guidance_scale if guidance_scale is not None else cfg.guidance_scale,
+                speed=speed,
+                fmt="wav",
+                audio_size_bytes=len(audio_out),
+            ))
+
         return Response(
             content=audio_out,
             media_type=media_type,
