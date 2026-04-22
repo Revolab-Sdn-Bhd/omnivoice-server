@@ -41,6 +41,9 @@ async def lifespan(app: FastAPI):
     cfg.profile_dir.mkdir(parents=True, exist_ok=True)
     app.state.profile_svc = ProfileService(profile_dir=cfg.profile_dir)
 
+    # Auto-register profiles from voice_samples/
+    _auto_register_voice_samples(app.state.profile_svc)
+
     # Response cache
     if cfg.response_cache_enabled:
         from .services.response_cache import ResponseCache
@@ -163,6 +166,30 @@ async def lifespan(app: FastAPI):
         app.state.inference_svc.stop_batch_scheduler()
     if getattr(app.state, "executor", None):
         app.state.executor.shutdown(wait=False)
+
+
+def _auto_register_voice_samples(profile_svc: ProfileService) -> None:
+    """Register .wav files in voice_samples/ that have a companion .txt transcript."""
+    import pathlib
+
+    samples_dir = pathlib.Path("voice_samples")
+    if not samples_dir.is_dir():
+        return
+
+    from .services.profiles import ProfileAlreadyExistsError
+
+    for wav in sorted(samples_dir.glob("*.wav")):
+        txt = wav.with_suffix(".txt")
+        if not txt.exists():
+            logger.warning("voice_samples/%s has no companion .txt — skipping auto-register", wav.name)
+            continue
+        profile_id = wav.stem
+        ref_text = txt.read_text().strip()
+        try:
+            profile_svc.save_profile(profile_id, wav.read_bytes(), ref_text=ref_text, overwrite=False)
+            logger.info("Auto-registered voice profile '%s' from voice_samples/", profile_id)
+        except ProfileAlreadyExistsError:
+            logger.debug("Voice profile '%s' already exists — skipping", profile_id)
 
 
 def _validate_config(cfg: Settings) -> None:
