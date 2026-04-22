@@ -51,3 +51,4 @@ bench_archive/
 
 # Generated repo analysis
 REPO_ANALYSIS/
+traces/
