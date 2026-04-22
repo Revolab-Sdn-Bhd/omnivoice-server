@@ -1,20 +1,22 @@
 # Voice Samples
 
-Audio samples demonstrating omnivoice-server output quality.
+Reference audio files for voice cloning profiles. Each `.wav` has a companion `.txt`
+containing the exact transcript required when registering the profile.
 
-## Download
+## Samples
 
-Voice samples are stored as GitHub Release assets to keep the repository size small:
+| File | Language | ref_text |
+|------|----------|----------|
+| `anwar.wav` | Malay | see `anwar.txt` |
 
-- [test_english.wav](https://github.com/maemreyo/omnivoice-server/releases/download/v0.1.0/test_english.wav) - English (Female, American accent) - 199KB
-- [test_vietnamese.wav](https://github.com/maemreyo/omnivoice-server/releases/download/v0.1.0/test_vietnamese.wav) - Vietnamese (Female) - 203KB
+## Adding a profile from these samples
 
-## Details
+```bash
+curl -X POST http://localhost:8880/v1/voices/profiles \
+  -F "profile_id=anwar" \
+  -F "ref_audio=@voice_samples/anwar.wav" \
+  -F "ref_text=$(cat voice_samples/anwar.txt)"
+```
 
-Both samples were generated on CPU with:
-- Device: cpu
-- num_step: 32
-- Quality: Clear, natural speech
-- RTF: 4.92 (slower than real-time on CPU, expected)
-
-For production deployments, use CUDA GPU for 20-25x faster synthesis (RTF ~0.2).
+> `ref_text` must be the **exact** transcript of the reference audio.
+> It conditions the speaker embedding — wrong text degrades clone quality.
