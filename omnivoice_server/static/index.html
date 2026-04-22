@@ -47,6 +47,8 @@ textarea{min-height:80px}
 .tab.active{background:#3b82f6;border-color:#3b82f6;color:#fff}
 .tab-content{display:none}
 .tab-content.active{display:block}
+.profile-section-label{font-size:11px;color:#525252;text-transform:uppercase;letter-spacing:0.5px;margin:12px 0 6px}
+.empty-state{font-size:13px;color:#525252;padding:12px 0}
 </style>
 </head>
 <body>
@@ -76,20 +78,20 @@ textarea{min-height:80px}
   <!-- Clone mode -->
   <div id="clone-panel" class="tab-content">
     <div class="card">
-      <h2>Reference Audio</h2>
-      <div class="presets" style="margin-bottom:12px">
-        <div class="preset-btn active" id="preset-anwar" onclick="selectRefSource('anwar')">Anwar</div>
-        <div class="preset-btn" id="preset-custom" onclick="selectRefSource('custom')">Custom Upload</div>
-      </div>
+      <h2>Speaker Profile</h2>
 
-      <!-- Anwar preset -->
-      <div id="anwar-panel">
-        <div class="ref-player">
-          <audio id="anwar-player" controls src="/static/anwar.wav"></audio>
-        </div>
+      <!-- Saved profiles (loaded from API) -->
+      <div class="profile-section-label">Saved Profiles</div>
+      <div class="presets" id="profile-list">
+        <span class="empty-state">Loading profiles...</span>
       </div>
 
       <!-- Custom upload -->
+      <div class="profile-section-label" style="margin-top:16px">One-shot Upload</div>
+      <div class="presets" style="margin-bottom:12px">
+        <div class="preset-btn" id="btn-custom" onclick="selectProfile('__custom__')">+ Custom Upload</div>
+      </div>
+
       <div id="custom-upload" style="display:none">
         <div class="upload-zone" id="upload-zone">
           <input type="file" id="ref-audio" accept="audio/*">
@@ -100,11 +102,10 @@ textarea{min-height:80px}
         <div class="ref-player" id="custom-player-wrap" style="display:none">
           <audio id="custom-player" controls></audio>
         </div>
-      </div>
-
-      <div style="margin-top:12px">
-        <label for="ref-text">Reference transcript (required)</label>
-        <input type="text" id="ref-text" value="terima kasih di atas kesempatan ini, dan seperti mana yang kita ikuti" placeholder="Type what was said in the reference audio" required>
+        <div style="margin-top:12px">
+          <label for="ref-text">Reference transcript (required)</label>
+          <input type="text" id="ref-text" placeholder="Exact transcript of the reference audio" required>
+        </div>
       </div>
     </div>
   </div>
@@ -122,7 +123,6 @@ textarea{min-height:80px}
       <div>
         <label for="num-step">Quality (steps)</label>
         <select id="num-step">
-          <option value="4">Fast (4)</option>
           <option value="8">Good (8)</option>
           <option value="16" selected>High (16)</option>
           <option value="32">Best (32)</option>
@@ -175,9 +175,9 @@ const PRESETS = [
 ];
 let currentMode = 'design';
 let selectedPreset = 'alloy';
-let refSource = 'anwar'; // 'anwar' or 'custom'
+let selectedProfile = null; // profile_id or '__custom__'
 
-// Build preset buttons
+// ── Build preset buttons ──────────────────────────────────────────────────
 const presetsEl = document.getElementById('presets');
 PRESETS.forEach(p => {
   const btn = document.createElement('div');
@@ -187,11 +187,52 @@ PRESETS.forEach(p => {
     document.querySelectorAll('#presets .preset-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     selectedPreset = p;
+    document.getElementById('instructions').value = '';
   };
   presetsEl.appendChild(btn);
 });
 
-// Tab switching
+// ── Load profiles from API ────────────────────────────────────────────────
+async function loadProfiles() {
+  const listEl = document.getElementById('profile-list');
+  try {
+    const res = await fetch('/v1/voices');
+    const data = await res.json();
+    const profiles = (data.voices || []).filter(v => v.profile_id);
+
+    listEl.innerHTML = '';
+    if (profiles.length === 0) {
+      listEl.innerHTML = '<span class="empty-state">No profiles saved yet.</span>';
+      return;
+    }
+
+    profiles.forEach(p => {
+      const btn = document.createElement('div');
+      btn.className = 'preset-btn';
+      btn.textContent = p.profile_id;
+      btn.dataset.profileId = p.profile_id;
+      btn.onclick = () => selectProfile(p.profile_id);
+      listEl.appendChild(btn);
+    });
+
+    // Auto-select first profile
+    selectProfile(profiles[0].profile_id);
+  } catch (e) {
+    listEl.innerHTML = '<span class="empty-state">Failed to load profiles.</span>';
+  }
+}
+
+function selectProfile(id) {
+  selectedProfile = id;
+  // Update button states
+  document.querySelectorAll('#profile-list .preset-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.profileId === id);
+  });
+  document.getElementById('btn-custom').classList.toggle('active', id === '__custom__');
+  document.getElementById('custom-upload').style.display = id === '__custom__' ? 'block' : 'none';
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────
 document.querySelectorAll('.tab').forEach(tab => {
   tab.onclick = () => {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -202,29 +243,20 @@ document.querySelectorAll('.tab').forEach(tab => {
   };
 });
 
-// Ref audio source switching
-function selectRefSource(src) {
-  refSource = src;
-  document.getElementById('preset-anwar').classList.toggle('active', src === 'anwar');
-  document.getElementById('preset-custom').classList.toggle('active', src === 'custom');
-  document.getElementById('anwar-panel').style.display = src === 'anwar' ? 'block' : 'none';
-  document.getElementById('custom-upload').style.display = src === 'custom' ? 'block' : 'none';
-}
-
-// Custom file upload
+// ── Custom file upload ────────────────────────────────────────────────────
 const refAudioInput = document.getElementById('ref-audio');
 const uploadZone = document.getElementById('upload-zone');
 refAudioInput.onchange = () => {
   if (refAudioInput.files.length) {
     uploadZone.classList.add('has-file');
     document.getElementById('ref-filename').textContent = refAudioInput.files[0].name;
-    // Play custom audio
     const url = URL.createObjectURL(refAudioInput.files[0]);
     document.getElementById('custom-player').src = url;
     document.getElementById('custom-player-wrap').style.display = 'block';
   }
 };
 
+// ── Generate ──────────────────────────────────────────────────────────────
 async function generate() {
   const btn = document.getElementById('generate-btn');
   const errorBox = document.getElementById('error-box');
@@ -237,7 +269,6 @@ async function generate() {
   btn.innerHTML = '<span class="spinner"></span>Generating...';
 
   try {
-    let response;
     const text = document.getElementById('text-input').value.trim();
     const numStep = parseInt(document.getElementById('num-step').value);
     const speed = parseFloat(document.getElementById('speed').value);
@@ -245,34 +276,49 @@ async function generate() {
 
     if (!text) throw new Error('Please enter some text');
 
-    const refText = document.getElementById('ref-text').value.trim();
-    if (!refText) throw new Error('Please enter the reference transcript');
+    let response;
 
     if (currentMode === 'clone') {
-      const formData = new FormData();
-      formData.append('text', text);
-      formData.append('ref_text', refText);
-      formData.append('speed', speed);
-      formData.append('num_step', numStep);
+      if (!selectedProfile) throw new Error('Please select a speaker profile');
 
-      if (refSource === 'anwar') {
-        // Fetch preset file and attach
-        const resp = await fetch('/static/anwar.wav');
-        const blob = await resp.blob();
-        formData.append('ref_audio', blob, 'anwar.wav');
-      } else {
+      if (selectedProfile === '__custom__') {
+        // One-shot clone via /v1/audio/speech/clone
+        const refText = document.getElementById('ref-text').value.trim();
+        if (!refText) throw new Error('Please enter the reference transcript');
         if (!refAudioInput.files.length) throw new Error('Please upload reference audio');
+
+        const formData = new FormData();
+        formData.append('text', text);
+        formData.append('ref_text', refText);
         formData.append('ref_audio', refAudioInput.files[0]);
+        formData.append('speed', speed);
+        formData.append('num_step', numStep);
+        response = await fetch('/v1/audio/speech/clone', { method: 'POST', body: formData });
+
+      } else {
+        // Saved profile via /v1/audio/speech
+        response = await fetch('/v1/audio/speech', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'omnivoice',
+            input: text,
+            voice: selectedProfile,
+            response_format: fmt,
+            speed,
+            num_step: numStep,
+          }),
+        });
       }
 
-      response = await fetch('/v1/audio/speech/clone', { method: 'POST', body: formData });
     } else {
+      // Design mode
       const body = {
         model: 'omnivoice',
         input: text,
         voice: selectedPreset,
         response_format: fmt,
-        speed: speed,
+        speed,
         num_step: numStep,
       };
       const instructions = document.getElementById('instructions').value.trim();
@@ -301,8 +347,9 @@ async function generate() {
 
     const sizeKB = (blob.size / 1024).toFixed(0);
     audioEl.addEventListener('loadedmetadata', () => {
-      document.getElementById('audio-meta').textContent = `${audioEl.duration.toFixed(1)}s · ${sizeKB} KB · ${fmt.toUpperCase()}`;
-    });
+      document.getElementById('audio-meta').textContent =
+        `${audioEl.duration.toFixed(1)}s · ${sizeKB} KB · ${fmt.toUpperCase()}`;
+    }, { once: true });
 
     player.style.display = 'block';
     audioEl.play().catch(() => {});
@@ -313,6 +360,9 @@ async function generate() {
     btn.innerHTML = 'Generate Speech';
   }
 }
+
+// Init
+loadProfiles();
 </script>
 </body>
 </html>
