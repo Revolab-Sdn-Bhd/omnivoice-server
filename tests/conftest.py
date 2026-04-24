@@ -66,7 +66,7 @@ def settings(tmp_path_factory):  # FIX: tmp_path_factory is a fixture param, not
     profile_dir = tmp_path_factory.mktemp("profiles")
     return Settings(
         device="cpu",
-        num_step=4,
+        num_step=8,
         max_concurrent=1,
         api_key="",
         profile_dir=profile_dir,
