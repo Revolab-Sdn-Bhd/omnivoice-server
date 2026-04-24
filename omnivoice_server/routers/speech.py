@@ -51,7 +51,7 @@ def _write_trace(
 
 def _build_trace_meta(
     *,
-    request: "Request",
+    request: Request,
     cfg,
     text: str,
     voice: str | None,
@@ -413,7 +413,8 @@ async def create_speech(
             latency_s=result.latency_s,
             duration_s=result.duration_s,
             num_step=body.num_step or cfg.num_step,
-            guidance_scale=body.guidance_scale if body.guidance_scale is not None else cfg.guidance_scale,
+            guidance_scale=body.guidance_scale if body.guidance_scale is not None
+            else cfg.guidance_scale,
             speed=body.speed,
             fmt=fmt,
             audio_size_bytes=len(audio_bytes),

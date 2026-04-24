@@ -191,13 +191,17 @@ def _auto_register_voice_samples(profile_svc: ProfileService) -> None:
     for audio in audio_files:
         txt = audio.with_suffix(".txt")
         if not txt.exists():
-            logger.warning("voice_samples/%s has no companion .txt — skipping auto-register", audio.name)
+            logger.warning(
+                "voice_samples/%s has no companion .txt — skipping auto-register", audio.name
+            )
             continue
 
         # Sanitize stem to a valid profile_id (mirrors ProfileService._profile_path)
         profile_id = "".join(c for c in audio.stem if c.isalnum() or c in "-_")
         if not profile_id:
-            logger.warning("voice_samples/%s: cannot derive a valid profile_id — skipping", audio.name)
+            logger.warning(
+                "voice_samples/%s: cannot derive a valid profile_id — skipping", audio.name
+            )
             continue
 
         ref_text = txt.read_text().strip()
@@ -221,7 +225,9 @@ def _auto_register_voice_samples(profile_svc: ProfileService) -> None:
 
         try:
             profile_svc.save_profile(profile_id, audio_bytes, ref_text=ref_text, overwrite=False)
-            logger.info("Auto-registered voice profile '%s' from voice_samples/%s", profile_id, audio.name)
+            logger.info(
+                "Auto-registered voice profile '%s' from voice_samples/%s", profile_id, audio.name
+            )
         except ProfileAlreadyExistsError:
             logger.debug("Voice profile '%s' already exists — skipping", profile_id)
 

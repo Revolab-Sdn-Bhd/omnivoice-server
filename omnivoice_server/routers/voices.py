@@ -224,7 +224,7 @@ async def update_profile(
     if ref_audio is not None and ref_text is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="ref_text is required when updating ref_audio — provide the transcript of the new audio.",
+            detail="ref_text is required when updating ref_audio — provide the transcript.",
         )
 
     if ref_audio is not None:
