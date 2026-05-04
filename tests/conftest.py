@@ -1,9 +1,5 @@
 """
 Shared fixtures for all tests.
-
-FIX: settings() fixture previously used pytest.tmp_path_factory.mktemp()
-as a plain attribute call — this is not valid Python. tmp_path_factory must
-be declared as a fixture parameter. Fixed below.
 """
 
 from __future__ import annotations
@@ -29,7 +25,7 @@ def make_silence_tensor(duration_s: float = 1.0) -> torch.Tensor:
 
 def make_wav_bytes(duration_frames: int = 0, sample_rate: int = 24000) -> bytes:
     """
-    Minimal valid WAV file. Used by clone and profile tests.
+    Minimal valid WAV file. Used by voice upload and profile tests.
     duration_frames=0 gives the smallest valid WAV (44-byte header, no audio).
     Tests that need parseable audio should pass duration_frames > 0.
     """
@@ -62,14 +58,16 @@ def _mock_synthesize(req):
 
 
 @pytest.fixture
-def settings(tmp_path_factory):  # FIX: tmp_path_factory is a fixture param, not pytest attr
+def settings(tmp_path_factory):
     profile_dir = tmp_path_factory.mktemp("profiles")
+    voices_dir = tmp_path_factory.mktemp("voices")
     return Settings(
         device="cpu",
         num_step=8,
         max_concurrent=1,
         api_key="",
         profile_dir=profile_dir,
+        voices_dir=voices_dir,
         workers=1,
     )
 
@@ -89,6 +87,32 @@ def client(settings):
 
 
 @pytest.fixture
+def client_not_loaded(settings):
+    """Client where model is NOT loaded (is_loaded=False)."""
+    app = create_app(settings)
+
+    with patch("omnivoice_server.services.model.ModelService.load", new_callable=AsyncMock):
+        with patch(
+            "omnivoice_server.services.model.ModelService.is_loaded",
+            new_callable=lambda: property(lambda self: False),
+        ):
+            with TestClient(app, raise_server_exceptions=False) as c:
+                yield c
+
+
+@pytest.fixture
 def sample_audio_bytes():
     """A minimal WAV suitable for upload tests."""
     return make_wav_bytes(duration_frames=100)
+
+
+@pytest.fixture
+def voice_with_file(client, sample_audio_bytes):
+    """Create a voice WAV file in the voices directory and return its name."""
+    cfg = client.app.state.cfg
+    wav_path = cfg.voices_dir / "test_voice.wav"
+    wav_path.write_bytes(sample_audio_bytes)
+    # Also write a companion .txt for ref_text
+    txt_path = cfg.voices_dir / "test_voice.txt"
+    txt_path.write_text("This is a test voice reference.")
+    return "test_voice"

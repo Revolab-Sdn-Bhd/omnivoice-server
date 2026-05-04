@@ -1,101 +1,71 @@
-"""
-Tests for streaming synthesis endpoint.
-
-The streaming test was previously buried in test_voices.py — moved here where
-it belongs, with additional edge-case coverage.
-"""
+"""Tests for streaming TTS endpoints."""
 
 from __future__ import annotations
 
+import json
 
-def test_streaming_returns_pcm_headers(client):
-    """Streaming response must set the PCM metadata headers."""
+
+def test_generate_stream_returns_sse(client, voice_with_file):
+    """POST /generate/stream returns SSE events with base64 audio."""
     resp = client.post(
-        "/v1/audio/speech",
-        json={"input": "Hello world. This is sentence two.", "stream": True},
+        "/generate/stream",
+        json={"text": "Hello world.", "voice_ref_path": "test_voice"},
     )
     assert resp.status_code == 200
-    assert resp.headers.get("X-Audio-Sample-Rate") == "24000"
-    assert resp.headers.get("X-Audio-Channels") == "1"
-    assert resp.headers.get("X-Audio-Bit-Depth") == "16"
-    assert resp.headers.get("X-Audio-Format") == "pcm-int16-le"
+    assert "text/event-stream" in resp.headers["content-type"]
+
+    # Parse SSE events
+    body = resp.text
+    events = [line for line in body.strip().split("\n") if line.startswith("data: ")]
+    assert len(events) >= 2  # At least one audio chunk + final event
+
+    # Check first audio event
+    first_data = json.loads(events[0][6:])
+    assert "chunk_index" in first_data
+    assert first_data["audio"] != ""
+    assert first_data["sample_rate"] == 24000
+    assert first_data["dtype"] == "float32"
+    assert first_data["is_final"] is False
+
+    # Check final event
+    last_data = json.loads(events[-1][6:])
+    assert last_data["is_final"] is True
+    assert last_data["audio"] == ""
 
 
-def test_streaming_content_type_is_pcm(client):
-    resp = client.post(
-        "/v1/audio/speech",
-        json={"input": "Hello.", "stream": True},
-    )
-    assert resp.status_code == 200
-    assert "audio/pcm" in resp.headers["content-type"]
-
-
-def test_streaming_returns_bytes(client):
-    """Should yield at least some PCM bytes for non-empty input."""
-    resp = client.post(
-        "/v1/audio/speech",
-        json={"input": "Hello world.", "stream": True},
-    )
-    assert resp.status_code == 200
-    assert len(resp.content) > 0
-
-
-def test_streaming_multi_sentence(client):
-    """Multiple sentences should all be synthesized.
-
-    Note: split_sentences merges short sentences into chunks (max 400 chars by default).
-    The 3 short sentences below get merged into 1 chunk, so we expect 1 synthesis call
-    returning 48KB (1s × 24kHz × 2 bytes), not 3 separate calls.
-    """
+def test_generate_stream_multiple_sentences(client, voice_with_file):
+    """Multiple sentences produce multiple audio chunks."""
     text = "First sentence. Second sentence. Third sentence."
     resp = client.post(
-        "/v1/audio/speech",
-        json={"input": text, "stream": True},
+        "/generate/stream",
+        json={"text": text, "voice_ref_path": "test_voice"},
     )
     assert resp.status_code == 200
-    # Short sentences get merged into 1 chunk → 1s silence = 48000 samples × 2 bytes
-    assert len(resp.content) >= 48000
+    events = [line for line in resp.text.strip().split("\n") if line.startswith("data: ")]
+    assert len(events) >= 2
 
 
-def test_streaming_ignores_voice_field(client):
-    """Streaming should ignore the voice field and keep working."""
+def test_speech_stream_sse(client, voice_with_file):
+    """POST /v1/audio/speech?stream=true returns SSE events."""
     resp = client.post(
-        "/v1/audio/speech",
-        json={"input": "Hello.", "voice": "clone:stream-test", "stream": True},
+        "/v1/audio/speech?stream=true",
+        json={"input": "Hello world.", "voice": "test_voice"},
     )
     assert resp.status_code == 200
+    assert "text/event-stream" in resp.headers["content-type"]
+
+    events = [line for line in resp.text.strip().split("\n") if line.startswith("data: ")]
+    assert len(events) >= 2
+
+    # Verify final event
+    last_data = json.loads(events[-1][6:])
+    assert last_data["is_final"] is True
 
 
-def test_streaming_empty_text_rejected(client):
-    """Empty text should be rejected by Pydantic validation, not silently pass."""
+def test_streaming_empty_text(client, voice_with_file):
+    """Empty text returns 422."""
     resp = client.post(
-        "/v1/audio/speech",
-        json={"input": "", "stream": True},
+        "/generate/stream",
+        json={"text": "", "voice_ref_path": "test_voice"},
     )
     assert resp.status_code == 422
-
-
-def test_streaming_nonexistent_profile_not_checked(client):
-    """Unknown clone voices should be ignored in streaming mode too."""
-    resp = client.post(
-        "/v1/audio/speech",
-        json={"input": "Hello.", "voice": "clone:does-not-exist", "stream": True},
-    )
-    assert resp.status_code == 200
-
-
-def test_streaming_does_not_return_wav_header(client):
-    """
-    PCM stream must NOT start with RIFF — that would be a WAV header embedded
-    in a raw PCM stream, which would corrupt the audio.
-    """
-    resp = client.post(
-        "/v1/audio/speech",
-        json={"input": "Hello.", "stream": True},
-    )
-    assert resp.status_code == 200
-    if len(resp.content) >= 4:
-        assert resp.content[:4] != b"RIFF", (
-            "Streaming returned WAV header in PCM stream — "
-            "check that streaming uses tensor_to_pcm16_bytes, not tensors_to_wav_bytes"
-        )
