@@ -31,6 +31,38 @@ def _tensor_to_base64_int16(tensor) -> str:
     return base64.b64encode(pcm.tobytes()).decode("ascii")
 
 
+SAMPLE_RATE = 24_000
+BYTES_PER_SECOND = SAMPLE_RATE * 2  # int16 mono = 2 bytes per sample
+
+
+async def _send_buffered_chunks(
+    ws: WebSocket,
+    pcm_buffer: bytearray,
+    ctx_id: str,
+    cancelled_contexts: set[str],
+    chunk_idx: int,
+    flush: bool = False,
+) -> int:
+    """Send complete 1-second chunks from buffer. Returns updated chunk_idx."""
+    while len(pcm_buffer) >= BYTES_PER_SECOND or (flush and pcm_buffer):
+        if ctx_id in cancelled_contexts:
+            return chunk_idx
+        chunk_size = BYTES_PER_SECOND if len(pcm_buffer) >= BYTES_PER_SECOND else len(pcm_buffer)
+        chunk_bytes = bytes(pcm_buffer[:chunk_size])
+        del pcm_buffer[:chunk_size]
+        audio_b64 = base64.b64encode(chunk_bytes).decode("ascii")
+        chunk_msg = json.dumps({
+            "type": "audio_chunk",
+            "data": audio_b64,
+            "done": False,
+            "status_code": 206,
+            "context_id": ctx_id,
+        })
+        await ws.send_text(chunk_msg)
+        chunk_idx += 1
+    return chunk_idx
+
+
 def _resolve_voice_path(voice_id: str, cfg) -> tuple[str | None, str | None]:
     """Resolve voice_id to (wav_path, ref_text)."""
     if not voice_id:
@@ -132,6 +164,8 @@ async def _process_transcript(
     active_tasks: dict[str, list[asyncio.Task]],
 ) -> None:
     """Process a single transcript message: split sentences, synthesize, stream."""
+    import numpy as np
+
     cfg = ws.app.state.cfg
     inference_svc = ws.app.state.inference_svc
 
@@ -141,9 +175,10 @@ async def _process_transcript(
         return
 
     sentences = split_sentences(transcript, max_chars=cfg.stream_chunk_max_chars)
+    pcm_buffer = bytearray()
+    chunk_idx = 0
 
     for sentence in sentences:
-        # Check cancellation
         if ctx_id in cancelled_contexts:
             return
 
@@ -168,15 +203,17 @@ async def _process_transcript(
         for tensor in result.tensors:
             if ctx_id in cancelled_contexts:
                 return
-            audio_b64 = _tensor_to_base64_int16(tensor)
-            chunk_msg = json.dumps({
-                "type": "audio_chunk",
-                "data": audio_b64,
-                "done": False,
-                "status_code": 206,
-                "context_id": ctx_id,
-            })
-            await ws.send_text(chunk_msg)
+            flat = tensor.squeeze(0).cpu().float().numpy()
+            pcm = (flat * 32767).clip(-32768, 32767).astype(np.int16)
+            pcm_buffer.extend(pcm.tobytes())
+            chunk_idx = await _send_buffered_chunks(
+                ws, pcm_buffer, ctx_id, cancelled_contexts, chunk_idx,
+            )
+
+    # Flush remaining buffer
+    await _send_buffered_chunks(
+        ws, pcm_buffer, ctx_id, cancelled_contexts, chunk_idx, flush=True,
+    )
 
 
 def _cleanup_task(
