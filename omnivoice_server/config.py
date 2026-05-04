@@ -154,6 +154,12 @@ class Settings(BaseSettings):
         description="Directory for saved voice cloning profiles",
     )
 
+    # Voices directory (WAV files for SepBox-compatible voice management)
+    voices_dir: Path = Field(
+        default=Path("voices"),
+        description="Directory containing voice WAV files",
+    )
+
     # Auth
     api_key: str = Field(
         default="",
