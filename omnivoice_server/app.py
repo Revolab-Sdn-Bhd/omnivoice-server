@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
-from .routers import health, models, speech, voices
+from .routers import generate, health, legacy, models, speech, voices, websocket
 from .services.inference import InferenceService, SynthesisRequest
 from .services.metrics import MetricsService
 from .services.model import ModelService
@@ -40,6 +40,9 @@ async def lifespan(app: FastAPI):
 
     cfg.profile_dir.mkdir(parents=True, exist_ok=True)
     app.state.profile_svc = ProfileService(profile_dir=cfg.profile_dir)
+
+    # Ensure voices directory exists
+    cfg.voices_dir.mkdir(parents=True, exist_ok=True)
 
     # Auto-register profiles from voice_samples/
     _auto_register_voice_samples(app.state.profile_svc)
@@ -260,7 +263,7 @@ def _status_to_code(status_code: int) -> str:
 def create_app(cfg: Settings) -> FastAPI:
     app = FastAPI(
         title="omnivoice-server",
-        description="OpenAI-compatible HTTP server for OmniVoice TTS",
+        description="SepBox-compatible HTTP server for OmniVoice TTS",
         version="0.1.0",
         docs_url="/docs",
         redoc_url=None,
@@ -284,11 +287,10 @@ def create_app(cfg: Settings) -> FastAPI:
 
         @app.middleware("http")
         async def auth_middleware(request: Request, call_next):
-            # Skip auth for health, metrics, and model listing
+            # Skip auth for health and static
             if request.url.path in (
-                "/health", "/live", "/ready",
-                "/metrics", "/metrics/prometheus", "/v1/models",
-                "/", "/static/index.html",
+                "/health", "/",
+                "/v1/models", "/v1/audio/voices",
             ) or request.url.path.startswith("/static/"):
                 return await call_next(request)
             auth = request.headers.get("Authorization", "")
@@ -327,10 +329,24 @@ def create_app(cfg: Settings) -> FastAPI:
         )
 
     # ── Routers ───────────────────────────────────────────────────────────────
-    app.include_router(speech.router, prefix="/v1")
-    app.include_router(voices.router, prefix="/v1")
-    app.include_router(models.router, prefix="/v1")
+    # Health (no prefix — serves /health directly)
     app.include_router(health.router)
+
+    # OpenAI-compatible (prefix /v1)
+    app.include_router(models.router, prefix="/v1")
+    app.include_router(speech.router, prefix="/v1")
+
+    # SepBox-compatible TTS (no prefix — serves /generate directly)
+    app.include_router(generate.router)
+
+    # Legacy ChatterBox-compatible (/api prefix)
+    app.include_router(legacy.router)
+
+    # Voice management (no prefix — serves /voices and /api/speakers directly)
+    app.include_router(voices.router)
+
+    # WebSocket
+    app.include_router(websocket.router)
 
     # ── Frontend ──────────────────────────────────────────────────────────────
     import pathlib
