@@ -396,6 +396,7 @@ async function generate() {
   const errorBox = document.getElementById('error-box');
 
   errorBox.innerHTML = '';
+  document.getElementById('stream-debug').style.display = 'none';
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Generating...';
 
