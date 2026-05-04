@@ -97,41 +97,51 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Build combinations based on scope
+    # Each combo: (subfolder, filename, instruct)
     combos = []
     if args.scope == "all":
-        # Gender × Age × Accent (moderate pitch, no style)
-        for g, a, acc in itertools.product(GENDERS, AGES, ACCENTS):
-            name = f"{g.lower()}_{a.lower().replace('-','')}_moderate_{acc.lower().replace(' ','_')}"
-            instruct = f"{g}, {a}, Moderate Pitch, {acc}"
-            combos.append((name, instruct))
-        # Gender × Pitch (young adult, american, no style)
+        # Accent × Gender × Age (moderate pitch)
+        for acc in ACCENTS:
+            acc_slug = acc.lower().replace(" ", "_")
+            for g, a in itertools.product(GENDERS, AGES):
+                age_slug = a.lower().replace("-", "")
+                fname = f"{g.lower()}_{age_slug}"
+                instruct = f"{g}, {a}, Moderate Pitch, {acc}"
+                combos.append((acc_slug, fname, instruct))
+
+        # Pitch sweep (gender × pitch, young adult, american)
         for g, p in itertools.product(GENDERS, PITCHES):
-            name = f"{g.lower()}_young_adult_{p.lower().replace(' ','_')}_american"
+            p_slug = p.lower().replace(" ", "_")
+            fname = f"{g.lower()}_{p_slug}"
             instruct = f"{g}, Young Adult, {p}, American Accent"
-            combos.append((name, instruct))
-        # Style variations (young adult, moderate, american)
+            combos.append(("pitch", fname, instruct))
+
+        # Whisper (gender, young adult, moderate, american)
         for g in GENDERS:
-            name = f"{g.lower()}_young_adult_moderate_american_whisper"
+            fname = f"{g.lower()}_whisper"
             instruct = f"{g}, Young Adult, Moderate Pitch, American Accent, Whisper"
-            combos.append((name, instruct))
+            combos.append(("whisper", fname, instruct))
 
     elif args.scope == "gender_age":
         for g, a in itertools.product(GENDERS, AGES):
-            name = f"{g.lower()}_{a.lower().replace('-','')}"
+            age_slug = a.lower().replace("-", "")
+            fname = f"{g.lower()}_{age_slug}"
             instruct = f"{g}, {a}, Moderate Pitch, American Accent"
-            combos.append((name, instruct))
+            combos.append(("gender_age", fname, instruct))
 
     elif args.scope == "gender_accent":
         for g, acc in itertools.product(GENDERS, ACCENTS):
-            name = f"{g.lower()}_{acc.lower().replace(' ','_')}"
+            acc_slug = acc.lower().replace(" ", "_")
+            fname = f"{g.lower()}_{acc_slug}"
             instruct = f"{g}, Young Adult, Moderate Pitch, {acc}"
-            combos.append((name, instruct))
+            combos.append(("gender_accent", fname, instruct))
 
     elif args.scope == "pitch":
         for g, p in itertools.product(GENDERS, PITCHES):
-            name = f"{g.lower()}_{p.lower().replace(' ','_')}"
+            p_slug = p.lower().replace(" ", "_")
+            fname = f"{g.lower()}_{p_slug}"
             instruct = f"{g}, Young Adult, {p}, American Accent"
-            combos.append((name, instruct))
+            combos.append(("pitch", fname, instruct))
 
     logger.info("Total combinations: %d", len(combos))
 
@@ -141,9 +151,11 @@ def main():
     skipped = 0
     start = time.time()
 
-    for i, (name, instruct) in enumerate(combos):
-        wav_path = out_dir / f"{name}.wav"
-        txt_path = out_dir / f"{name}.txt"
+    for i, (subfolder, fname, instruct) in enumerate(combos):
+        dest = out_dir / subfolder
+        dest.mkdir(parents=True, exist_ok=True)
+        wav_path = dest / f"{fname}.wav"
+        txt_path = dest / f"{fname}.txt"
 
         if args.skip_existing and wav_path.exists():
             skipped += 1
@@ -156,11 +168,11 @@ def main():
             generated += 1
             dur = tensor.shape[-1] / SAMPLE_RATE
             logger.info(
-                "[%d/%d] %s (%.1fs) ← %s",
-                i + 1, len(combos), name, dur, instruct,
+                "[%d/%d] %s/%s (%.1fs) ← %s",
+                i + 1, len(combos), subfolder, fname, dur, instruct,
             )
         except Exception as e:
-            logger.error("[%d/%d] FAILED %s: %s", i + 1, len(combos), name, e)
+            logger.error("[%d/%d] FAILED %s/%s: %s", i + 1, len(combos), subfolder, fname, e)
 
     elapsed = time.time() - start
     logger.info(
