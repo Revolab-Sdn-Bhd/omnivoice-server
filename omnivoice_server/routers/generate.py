@@ -29,6 +29,33 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# ── Prompt presets ──────────────────────────────────────────────────────────────
+
+QUOTES = [
+    "How are you doing today?",
+    "My account number is AA212CC8819000ZZ.",
+    "The quick brown fox jumps over the lazy dog.",
+    "She sells seashells by the seashore.",
+    "I have an appointment scheduled for next Tuesday at 3 PM.",
+    "Please transfer five hundred ringgit to account number 1234567890.",
+    "The weather forecast predicts heavy rainfall in the northern regions.",
+    "Welcome to our customer service hotline, how may I assist you?",
+    "Your order has been shipped and will arrive within three to five business days.",
+    "Saya ingin membuat aduan mengenain perkhidmatan yang diterima semalam.",
+    "Terima kasih kerana menghubungi kami, ada apa yang boleh saya bantu?",
+    "This is a longer passage used for testing multi-sentence synthesis. "
+    "It contains several sentences with varying lengths and complexities. "
+    "The purpose is to evaluate how well the system handles extended text input "
+    "while maintaining natural prosody and consistent voice quality throughout.",
+]
+
+
+@router.get("/api/quotes")
+async def get_quotes():
+    """Returns a curated list of test sentences for TTS evaluation."""
+    return {"quotes": QUOTES}
+
+
 # ── Request model ──────────────────────────────────────────────────────────────
 
 

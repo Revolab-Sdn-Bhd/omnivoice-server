@@ -46,27 +46,6 @@ def test_upload_voice_invalid_name(client, sample_audio_bytes):
     assert resp.status_code == 400
 
 
-def test_list_speakers_legacy(client, voice_with_file):
-    """GET /api/speakers returns speakers key (legacy format)."""
-    resp = client.get("/api/speakers")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "speakers" in data
-    ids = [s["id"] for s in data["speakers"]]
-    assert "test_voice" in ids
-
-
-def test_create_speaker_legacy(client, sample_audio_bytes):
-    """POST /api/create_speaker creates a voice using speaker_name."""
-    resp = client.post(
-        "/api/create_speaker",
-        data={"speaker_name": "legacy_voice"},
-        files={"audio_file": ("f.wav", io.BytesIO(sample_audio_bytes), "audio/wav")},
-    )
-    assert resp.status_code == 201
-    assert resp.json()["id"] == "legacy_voice"
-
-
 def test_upload_voice_appears_in_list(client, sample_audio_bytes):
     """Uploaded voice appears in GET /voices."""
     client.post(

@@ -1,8 +1,6 @@
 """
 GET  /voices             — list WAV files from voices/ dir
 POST /voices             — upload a new voice WAV
-GET  /api/speakers       — legacy alias (key "speakers")
-POST /api/create_speaker — legacy alias (param "speaker_name")
 
 Profile management endpoints kept for OmniVoice clone support:
   /v1/voices/profiles/*
@@ -90,60 +88,6 @@ async def upload_voice(
         )
 
     # Save WAV file
-    voices_dir: Path = cfg.voices_dir
-    voices_dir.mkdir(parents=True, exist_ok=True)
-    dest = voices_dir / f"{sanitized}.wav"
-    try:
-        dest.write_bytes(raw)
-    except OSError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save voice file: {e}",
-        )
-
-    return {
-        "id": sanitized,
-        "name": sanitized.replace("_", " ").replace("-", " ").title(),
-        "path": str(dest.resolve()),
-    }
-
-
-# ── GET /api/speakers (legacy) ────────────────────────────────────────────────
-
-
-@router.get("/api/speakers")
-async def list_speakers(cfg=Depends(_get_cfg)):
-    """Legacy alias for GET /voices. Uses key 'speakers' instead of 'voices'."""
-    voices = _scan_voices(cfg.voices_dir)
-    return {"speakers": voices}
-
-
-# ── POST /api/create_speaker (legacy) ─────────────────────────────────────────
-
-
-@router.post("/api/create_speaker", status_code=status.HTTP_201_CREATED)
-async def create_speaker(
-    speaker_name: str = Form(..., description="Name for the voice"),
-    audio_file: UploadFile = File(..., description="Voice reference WAV audio"),
-    cfg=Depends(_get_cfg),
-):
-    """Legacy alias for POST /voices. Uses speaker_name instead of voice_name."""
-    # Reuse the upload_voice logic by calling it with the same params
-    sanitized = re.sub(r"[^a-zA-Z0-9_\-]", "", speaker_name)
-    if not sanitized:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="speaker_name contains no valid characters",
-        )
-
-    raw = await audio_file.read()
-    max_bytes = 50 * 1024 * 1024
-    if len(raw) > max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large: {len(raw) / 1024 / 1024:.1f}MB exceeds 50MB limit",
-        )
-
     voices_dir: Path = cfg.voices_dir
     voices_dir.mkdir(parents=True, exist_ok=True)
     dest = voices_dir / f"{sanitized}.wav"

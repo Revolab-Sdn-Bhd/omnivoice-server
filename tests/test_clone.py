@@ -1,5 +1,5 @@
 """
-Tests for /generate, /api/generate_tts, /api/quotes, and /v1/models endpoints.
+Tests for /generate, /api/quotes, and /v1/models endpoints.
 """
 
 from __future__ import annotations
@@ -41,53 +41,6 @@ def test_generate_accepts_all_params(client, voice_with_file):
         },
     )
     assert resp.status_code == 200
-
-
-def test_legacy_generate_tts(client, voice_with_file):
-    """POST /api/generate_tts returns WAV."""
-    resp = client.post(
-        "/api/generate_tts",
-        data={"text": "Hello world", "speaker_name": "test_voice"},
-    )
-    assert resp.status_code == 200
-    assert resp.content[:4] == b"RIFF"
-
-
-def test_legacy_generate_tts_speaker_name_with_ext(client, voice_with_file):
-    """POST /api/generate_tts normalizes speaker_name.wav."""
-    resp = client.post(
-        "/api/generate_tts",
-        data={"text": "Hello", "speaker_name": "test_voice.wav"},
-    )
-    assert resp.status_code == 200
-
-
-def test_legacy_generate_tts_rejects_temp_prefix(client, voice_with_file):
-    """POST /api/generate_tts rejects [TEMP] prefixed names."""
-    resp = client.post(
-        "/api/generate_tts",
-        data={"text": "Hello", "speaker_name": "[TEMP]_voice"},
-    )
-    assert resp.status_code == 400
-
-
-def test_legacy_generate_tts_voice_not_found(client):
-    """POST /api/generate_tts returns 404 for unknown voice."""
-    resp = client.post(
-        "/api/generate_tts",
-        data={"text": "Hello", "speaker_name": "nonexistent"},
-    )
-    assert resp.status_code == 404
-
-
-def test_legacy_generate_tts_stream(client, voice_with_file):
-    """POST /api/generate_tts_stream returns SSE events."""
-    resp = client.post(
-        "/api/generate_tts_stream",
-        data={"text": "Hello world.", "speaker_name": "test_voice"},
-    )
-    assert resp.status_code == 200
-    assert "text/event-stream" in resp.headers["content-type"]
 
 
 def test_get_quotes(client):

@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
-from .routers import generate, health, legacy, models, speech, voices, websocket
+from .routers import generate, health, models, speech, voices, websocket
 from .services.inference import InferenceService, SynthesisRequest
 from .services.metrics import MetricsService
 from .services.model import ModelService
@@ -339,10 +339,7 @@ def create_app(cfg: Settings) -> FastAPI:
     # SepBox-compatible TTS (no prefix — serves /generate directly)
     app.include_router(generate.router)
 
-    # Legacy ChatterBox-compatible (/api prefix)
-    app.include_router(legacy.router)
-
-    # Voice management (no prefix — serves /voices and /api/speakers directly)
+    # Voice management (no prefix — serves /voices directly)
     app.include_router(voices.router)
 
     # WebSocket

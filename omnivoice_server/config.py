@@ -156,7 +156,7 @@ class Settings(BaseSettings):
 
     # Voices directory (WAV files for SepBox-compatible voice management)
     voices_dir: Path = Field(
-        default=Path("voices"),
+        default=Path("omnivoice_server/static/speakers"),
         description="Directory containing voice WAV files",
     )
 
