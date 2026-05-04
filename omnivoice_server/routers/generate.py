@@ -127,6 +127,9 @@ class TTSRequest(BaseModel):
     max_tokens: int = Field(default=1000, ge=1)
     target_lufs: float = Field(default=-23.0, ge=-60.0, le=0.0)
     trim_front_seconds: float = Field(default=0.5, ge=0.0, le=5.0)
+    instruct: str | None = Field(
+        default=None, description="Voice design instruction",
+    )
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -185,20 +188,20 @@ def _build_synthesis_req(body: TTSRequest, cfg) -> SynthesisRequest:
 
     if audio_path:
         mode = "clone"
+    elif body.instruct:
+        mode = "design"
     else:
         mode = "design"
 
     return SynthesisRequest(
         text=body.text,
         mode=mode,
+        instruct=body.instruct,
         ref_audio_path=audio_path,
         ref_text=ref_text,
         speed=1.0,
         language=body.language if body.language != "en" else None,
-        # Map temperature to class_temperature (closest equivalent)
         class_temperature=body.temperature if body.temperature != 0.3 else None,
-        # The following are accepted for API compat but OmniVoice doesn't use them
-        # top_p, repetition_penalty, frequency_penalty, min_p, max_tokens
     )
 
 
