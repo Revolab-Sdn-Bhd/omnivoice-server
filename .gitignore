@@ -49,3 +49,6 @@ bench_archive/
 # Generated repo analysis
 REPO_ANALYSIS/
 traces/
+# Voice design test samples (for listening only)
+*_accent.wav
+*_accent.txt
