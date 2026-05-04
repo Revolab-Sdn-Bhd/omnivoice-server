@@ -68,6 +68,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .generate-btn{width:100%;background:#3b82f6;border:none;border-radius:10px;color:#fff;padding:14px;font-size:15px;font-weight:600;cursor:pointer;transition:background .15s;margin-top:4px}
 .generate-btn:hover{background:#2563eb}
 .generate-btn:disabled{background:#1e1e1e;color:#444;cursor:not-allowed}
+.stream-btn{background:#8b5cf6}
+.stream-btn:hover{background:#7c3aed}
+.stream-btn:disabled{background:#1e1e1e;color:#444;cursor:not-allowed}
 
 /* Error */
 .error{background:#2a1010;border:1px solid #5c1a1a;border-radius:10px;padding:14px;color:#f87171;font-size:13px;margin-top:12px}
@@ -155,7 +158,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     </div>
 
     <!-- Generate -->
-    <button class="generate-btn" id="generate-btn" onclick="generate()">Generate</button>
+    <div style="display:flex;gap:10px">
+      <button class="generate-btn" id="generate-btn" onclick="generate()" style="flex:3">Generate</button>
+      <button class="generate-btn stream-btn" id="stream-btn" onclick="streamGenerate()" style="flex:1">Stream</button>
+    </div>
     <div id="error-box"></div>
 
     <!-- Audio Visualization -->
@@ -424,6 +430,104 @@ async function generate() {
   } finally {
     btn.disabled = false;
     btn.innerHTML = 'Generate';
+  }
+}
+
+// ── Stream via WebSocket ─────────────────────────────────────────────────────
+function _buildWavHeader(dataLength, sampleRate, bitsPerSample, channels) {
+  const buffer = new ArrayBuffer(44);
+  const view = new DataView(buffer);
+  const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataLength, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * channels * (bitsPerSample / 8), true);
+  view.setUint16(32, channels * (bitsPerSample / 8), true);
+  view.setUint16(34, bitsPerSample, true);
+  writeStr(36, 'data');
+  view.setUint32(40, dataLength, true);
+  return new Uint8Array(buffer);
+}
+
+async function streamGenerate() {
+  const btn = document.getElementById('stream-btn');
+  const errorBox = document.getElementById('error-box');
+
+  errorBox.innerHTML = '';
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Streaming...';
+
+  try {
+    const text = document.getElementById('text-input').value.trim();
+    if (!text) throw new Error('Please enter text or select a preset');
+    if (!selectedSpeaker && !activeInstruct) throw new Error('Please select a speaker or design a voice');
+
+    const wsUrl = location.protocol.replace('http', 'ws') + '//' + location.host + '/tts/websocket';
+    const ws = new WebSocket(wsUrl);
+
+    const pcmChunks = [];
+    let ctxId = 'stream-' + Date.now();
+
+    await new Promise((resolve, reject) => {
+      ws.onopen = () => {
+        ws.send(JSON.stringify({
+          transcript: text,
+          voice: { mode: 'id', id: selectedSpeaker || 'anwar' },
+          output_format: { container: 'raw', encoding: 'pcm_s16le', sample_rate: 24000 },
+          context_id: ctxId,
+          continue: false,
+        }));
+      };
+
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'audio_chunk' && msg.data) {
+          const raw = atob(msg.data);
+          const buf = new Uint8Array(raw.length);
+          for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+          pcmChunks.push(buf);
+        } else if (msg.type === 'done') {
+          ws.close();
+          resolve();
+        } else if (msg.type === 'error') {
+          ws.close();
+          reject(new Error(msg.error || 'Stream failed'));
+        }
+      };
+
+      ws.onerror = () => reject(new Error('WebSocket connection failed'));
+      ws.onclose = () => resolve();
+    });
+
+    if (pcmChunks.length === 0) throw new Error('No audio received');
+
+    // Assemble PCM + WAV header
+    const totalLen = pcmChunks.reduce((s, c) => s + c.length, 0);
+    const wavHeader = _buildWavHeader(totalLen, 24000, 16, 1);
+    const wav = new Uint8Array(44 + totalLen);
+    wav.set(wavHeader, 0);
+    let offset = 44;
+    for (const chunk of pcmChunks) { wav.set(chunk, offset); offset += chunk.length; }
+
+    const blob = new Blob([wav], { type: 'audio/wav' });
+    lastGeneratedBlob = blob;
+    lastWasDesign = !!activeInstruct;
+    const url = URL.createObjectURL(blob);
+    document.getElementById('download-link').href = url;
+
+    document.getElementById('audio-viz').style.display = 'block';
+    document.getElementById('save-speaker-link').style.display = lastWasDesign ? 'inline' : 'none';
+    _initWavesurfer(blob);
+  } catch (e) {
+    errorBox.innerHTML = `<div class="error">${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = 'Stream';
   }
 }
 
