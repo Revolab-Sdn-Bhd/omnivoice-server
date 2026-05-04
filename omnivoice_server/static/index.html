@@ -405,9 +405,9 @@ async function generate() {
       text,
       voice_ref_path: selectedSpeaker || undefined,
       instruct: activeInstruct || undefined,
-      temperature: parseFloat(document.getElementById('param-temp').value) || 0.3,
-      target_lufs: parseFloat(document.getElementById('param-lufs').value) || -23,
-      trim_front_seconds: parseFloat(document.getElementById('param-trim').value) || 0.5,
+      temperature: _num('param-temp', 0.3),
+      target_lufs: _num('param-lufs', -23),
+      trim_front_seconds: _num('param-trim', 0.5),
     };
 
     const response = await fetch('/generate', {
@@ -546,6 +546,10 @@ function esc(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+function _num(id, fallback) {
+  const v = parseFloat(document.getElementById(id).value);
+  return isFinite(v) ? v : fallback;
 }
 
 // ── Start ───────────────────────────────────────────────────────────────────
