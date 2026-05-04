@@ -164,6 +164,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     </div>
     <div id="error-box"></div>
 
+    <!-- Stream Debug Panel -->
+    <div id="stream-debug" style="display:none;margin-top:16px">
+      <div class="section-label" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Stream Debug</span>
+        <span id="stream-stats" style="font-weight:400;color:#5588ff"></span>
+      </div>
+      <div id="stream-log" style="background:#0d0d0d;border:1px solid #1e1e1e;border-radius:8px;padding:10px 12px;font-family:monospace;font-size:11px;max-height:260px;overflow-y:auto;line-height:1.6"></div>
+    </div>
+
     <!-- Audio Visualization -->
     <div id="audio-viz" style="display:none;margin-top:16px">
       <div class="section-label">Audio Visualization</div>
@@ -454,11 +463,31 @@ function _buildWavHeader(dataLength, sampleRate, bitsPerSample, channels) {
   return new Uint8Array(buffer);
 }
 
+function _hexDump(uint8arr, maxBytes) {
+  const bytes = [];
+  const n = Math.min(uint8arr.length, maxBytes || 16);
+  for (let i = 0; i < n; i++) bytes.push(uint8arr[i].toString(16).padStart(2, '0'));
+  return bytes.join(' ') + (uint8arr.length > n ? ' ...' : '');
+}
+
+function _streamLog(el, type, msg, color) {
+  const ts = new Date().toLocaleTimeString('en-US', { hour12: false, fractionalSecondDigits: 3 });
+  const c = color || '#aaa';
+  el.innerHTML += `<div style="color:${c}"><span style="color:#555">${ts}</span> <span style="color:#666">[${type}]</span> ${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
 async function streamGenerate() {
   const btn = document.getElementById('stream-btn');
   const errorBox = document.getElementById('error-box');
+  const debugPanel = document.getElementById('stream-debug');
+  const log = document.getElementById('stream-log');
+  const stats = document.getElementById('stream-stats');
 
   errorBox.innerHTML = '';
+  log.innerHTML = '';
+  stats.textContent = '';
+  debugPanel.style.display = 'block';
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Streaming...';
 
@@ -468,20 +497,26 @@ async function streamGenerate() {
     if (!selectedSpeaker && !activeInstruct) throw new Error('Please select a speaker or design a voice');
 
     const wsUrl = location.protocol.replace('http', 'ws') + '//' + location.host + '/tts/websocket';
-    const ws = new WebSocket(wsUrl);
+    _streamLog(log, 'WS', 'Connecting to ' + wsUrl, '#888');
 
+    const ws = new WebSocket(wsUrl);
     const pcmChunks = [];
-    let ctxId = 'stream-' + Date.now();
+    const ctxId = 'stream-' + Date.now();
+    let chunkIdx = 0;
+    let totalBytes = 0;
+    const startTime = performance.now();
 
     await new Promise((resolve, reject) => {
       ws.onopen = () => {
-        ws.send(JSON.stringify({
+        const payload = {
           transcript: text,
           voice: { mode: 'id', id: selectedSpeaker || 'anwar' },
           output_format: { container: 'raw', encoding: 'pcm_s16le', sample_rate: 24000 },
           context_id: ctxId,
           continue: false,
-        }));
+        };
+        _streamLog(log, 'SEND', JSON.stringify(payload).substring(0, 120) + '...', '#5588ff');
+        ws.send(JSON.stringify(payload));
       };
 
       ws.onmessage = (event) => {
@@ -491,16 +526,25 @@ async function streamGenerate() {
           const buf = new Uint8Array(raw.length);
           for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
           pcmChunks.push(buf);
+          chunkIdx++;
+          totalBytes += buf.length;
+          const hex = _hexDump(buf, 16);
+          _streamLog(log, `CHUNK #${chunkIdx}`, `${buf.length} bytes | first: ${hex}`, '#4ade80');
+          const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+          stats.textContent = `${chunkIdx} chunks · ${(totalBytes/1024).toFixed(1)} KB · ${elapsed}s`;
         } else if (msg.type === 'done') {
+          const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
+          _streamLog(log, 'DONE', `${chunkIdx} chunks, ${totalBytes} bytes in ${elapsed}s`, '#fbbf24');
           ws.close();
           resolve();
         } else if (msg.type === 'error') {
+          _streamLog(log, 'ERROR', esc(msg.error), '#f87171');
           ws.close();
           reject(new Error(msg.error || 'Stream failed'));
         }
       };
 
-      ws.onerror = () => reject(new Error('WebSocket connection failed'));
+      ws.onerror = () => { _streamLog(log, 'ERROR', 'Connection failed', '#f87171'); reject(new Error('WebSocket connection failed')); };
       ws.onclose = () => resolve();
     });
 
