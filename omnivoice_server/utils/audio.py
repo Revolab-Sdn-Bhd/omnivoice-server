@@ -71,13 +71,25 @@ def tensor_to_wav_bytes(tensor: torch.Tensor) -> bytes:
         os.unlink(tmp_path)
 
 
+def _postprocess(tensor: torch.Tensor) -> torch.Tensor:
+    """Trim 0.5s from front and normalize to -23 LUFS."""
+    trim_samples = int(0.5 * SAMPLE_RATE)
+    if tensor.shape[-1] > trim_samples:
+        tensor = tensor[..., trim_samples:]
+    tensor = normalize_loudness(tensor, target_lufs=-23.0)
+    return tensor
+
+
 def tensors_to_wav_bytes(tensors: list[torch.Tensor]) -> bytes:
     """
     Concatenate multiple (1, T) tensors into a single WAV.
+    Applies 0.5s front trim and -23 LUFS normalization.
     """
     if len(tensors) == 1:
-        return tensor_to_wav_bytes(tensors[0])
-    combined = torch.cat([t.cpu() for t in tensors], dim=-1)
+        combined = tensors[0].cpu()
+    else:
+        combined = torch.cat([t.cpu() for t in tensors], dim=-1)
+    combined = _postprocess(combined)
     return tensor_to_wav_bytes(combined)
 
 

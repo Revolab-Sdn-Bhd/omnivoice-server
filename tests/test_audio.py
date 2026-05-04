@@ -37,22 +37,28 @@ def test_tensor_to_wav_bytes():
 
 
 def test_tensors_to_wav_bytes_single():
-    """Single tensor should work the same as tensor_to_wav_bytes."""
+    """Single tensor should produce valid WAV with post-processing."""
     tensor = torch.randn(1, 24000)
-    result = tensors_to_wav_bytes([tensor])
-    expected = tensor_to_wav_bytes(tensor)
-    assert result == expected
+    wav_bytes = tensors_to_wav_bytes([tensor])
+
+    assert wav_bytes[:4] == b"RIFF"
+    buf = io.BytesIO(wav_bytes)
+    waveform, sample_rate = torchaudio.load(buf)
+    assert sample_rate == 24000
+    # Post-processing trims 0.5s (12000 samples) from front
+    assert waveform.shape[1] == 12000
 
 
 def test_tensors_to_wav_bytes_multiple():
-    """Multiple tensors should be concatenated."""
+    """Multiple tensors should be concatenated, then trimmed."""
     t1 = torch.randn(1, 12000)
     t2 = torch.randn(1, 12000)
     wav_bytes = tensors_to_wav_bytes([t1, t2])
 
     buf = io.BytesIO(wav_bytes)
     waveform, sample_rate = torchaudio.load(buf)
-    assert waveform.shape[1] == 24000  # 12000 + 12000
+    # 12000 + 12000 - 12000 (0.5s trim) = 12000
+    assert waveform.shape[1] == 12000
 
 
 def test_tensor_to_pcm16_bytes():
