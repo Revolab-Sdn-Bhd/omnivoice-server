@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SepBox TTS</title>
+<script src="https://unpkg.com/wavesurfer.js@7"></script>
+<script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/spectrogram.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e5e5e5;min-height:100vh}
@@ -67,18 +69,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .generate-btn:hover{background:#2563eb}
 .generate-btn:disabled{background:#1e1e1e;color:#444;cursor:not-allowed}
 
-/* Floating player */
-.floating-player{position:fixed;bottom:20px;right:20px;width:480px;background:#181818;border:1px solid #252525;border-radius:14px;padding:16px;box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:100;display:none}
-.floating-player.visible{display:block}
-.floating-player .fp-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.floating-player .fp-title{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.5px}
-.floating-player .fp-close{background:none;border:none;color:#666;cursor:pointer;font-size:16px;padding:4px}
-.floating-player .fp-close:hover{color:#aaa}
-.floating-player audio{width:100%;border-radius:8px;height:36px}
-.floating-player .fp-meta{display:flex;justify-content:space-between;margin-top:8px;font-size:11px;color:#555}
-.floating-player canvas{width:100%;height:120px;border-radius:8px;margin-top:10px;background:#111}
-.floating-player .fp-download{color:#3b82f6;text-decoration:none}
-
 /* Error */
 .error{background:#2a1010;border:1px solid #5c1a1a;border-radius:10px;padding:14px;color:#f87171;font-size:13px;margin-top:12px}
 
@@ -106,7 +96,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   .sidebar{width:100%;min-width:unset;max-height:200px;border-right:none;border-bottom:1px solid #1e1e1e}
   .sidebar-body{display:flex;overflow-x:auto;gap:8px;padding:8px}
   .speaker-card{min-width:140px;margin-bottom:0}
-  .floating-player{width:calc(100% - 32px);left:16px;right:16px}
 }
 </style>
 </head>
@@ -168,6 +157,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <!-- Generate -->
     <button class="generate-btn" id="generate-btn" onclick="generate()">Generate</button>
     <div id="error-box"></div>
+
+    <!-- Audio Visualization -->
+    <div id="audio-viz" style="display:none;margin-top:16px">
+      <div class="section-label">Audio Visualization</div>
+      <div id="waveform"></div>
+      <div id="spectrogram"></div>
+      <div style="display:flex;gap:10px;margin-top:10px;font-size:12px;color:#888">
+        <span id="audio-meta"></span>
+        <span>
+          <a id="download-link" style="color:#3b82f6;text-decoration:none" download="speech.wav">Download</a>
+          <a id="save-speaker-link" style="display:none;cursor:pointer;color:#3b82f6;text-decoration:none;margin-left:10px" onclick="saveAsSpeaker()">Save as Speaker</a>
+        </span>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -225,23 +228,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   </div>
 </div>
 
-<!-- Floating Player -->
-<div class="floating-player" id="floating-player">
-  <div class="fp-header">
-    <span class="fp-title">Now Playing</span>
-    <button class="fp-close" onclick="hidePlayer()">&times;</button>
-  </div>
-  <audio id="audio-player" controls></audio>
-  <canvas id="spectrogram-canvas"></canvas>
-  <div class="fp-meta">
-    <span id="audio-meta"></span>
-    <span>
-      <a id="download-link" class="fp-download" download="speech.wav">Download</a>
-      <a id="save-speaker-link" class="fp-download" style="display:none;cursor:pointer;margin-left:10px" onclick="saveAsSpeaker()">Save as Speaker</a>
-    </span>
-  </div>
-</div>
-
 <!-- Upload Modal -->
 <div class="modal-overlay" id="upload-modal">
   <div class="modal">
@@ -268,6 +254,7 @@ let selectedSpeaker = null;
 let activeInstruct = null;
 let lastGeneratedBlob = null;
 let lastWasDesign = false;
+let wavesurfer = null;
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
@@ -391,8 +378,6 @@ async function previewVoice(id) {
 async function generate() {
   const btn = document.getElementById('generate-btn');
   const errorBox = document.getElementById('error-box');
-  const player = document.getElementById('floating-player');
-  const audioEl = document.getElementById('audio-player');
 
   errorBox.innerHTML = '';
   btn.disabled = true;
@@ -428,18 +413,11 @@ async function generate() {
     lastGeneratedBlob = blob;
     lastWasDesign = !!activeInstruct;
     const url = URL.createObjectURL(blob);
-    audioEl.src = url;
     document.getElementById('download-link').href = url;
 
-    const sizeKB = (blob.size / 1024).toFixed(0);
-    audioEl.addEventListener('loadedmetadata', () => {
-      document.getElementById('audio-meta').textContent = `${audioEl.duration.toFixed(1)}s · ${sizeKB} KB · WAV`;
-    }, { once: true });
-
-    player.classList.add('visible');
+    document.getElementById('audio-viz').style.display = 'block';
     document.getElementById('save-speaker-link').style.display = lastWasDesign ? 'inline' : 'none';
-    renderSpectrogram(blob).catch(() => {});
-    audioEl.play().catch(() => {});
+    _initWavesurfer(blob);
   } catch (e) {
     errorBox.innerHTML = `<div class="error">${esc(e.message)}</div>`;
   } finally {
@@ -516,8 +494,8 @@ function applyDesign() {
 
 // ── Player ──────────────────────────────────────────────────────────────────
 function hidePlayer() {
-  document.getElementById('floating-player').classList.remove('visible');
-  document.getElementById('audio-player').pause();
+  document.getElementById('audio-viz').style.display = 'none';
+  if (wavesurfer) { wavesurfer.destroy(); wavesurfer = null; }
 }
 
 async function saveAsSpeaker() {
@@ -556,93 +534,32 @@ function _num(id, fallback) {
 }
 
 // ── Spectrogram ────────────────────────────────────────────────────────────
-async function renderSpectrogram(blob) {
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
-  ctx.close();
-  const data = buf.getChannelData(0);
-  const sr = buf.sampleRate;
-  const fftSize = 1024;
-  const hop = fftSize >> 1;
-  const win = new Float32Array(fftSize);
-  for (let i = 0; i < fftSize; i++) win[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / (fftSize - 1)));
-  const numFrames = Math.floor((data.length - fftSize) / hop) + 1;
-  const numBins = fftSize >> 1;
-  const mag = new Float32Array(numFrames * numBins);
-  let maxMag = 0;
-  const re = new Float32Array(fftSize);
-  const im = new Float32Array(fftSize);
-  for (let f = 0; f < numFrames; f++) {
-    const off = f * hop;
-    for (let i = 0; i < fftSize; i++) { re[i] = data[off + i] * win[i]; im[i] = 0; }
-    _fft(re, im, fftSize);
-    for (let b = 0; b < numBins; b++) {
-      const m = Math.sqrt(re[b]*re[b] + im[b]*im[b]);
-      const db = 20 * Math.log10(m + 1e-10);
-      const norm = Math.max(0, Math.min(1, (db + 80) / 80));
-      mag[f * numBins + b] = norm;
-      if (norm > maxMag) maxMag = norm;
-    }
-  }
-  const canvas = document.getElementById('spectrogram-canvas');
-  const dpr = window.devicePixelRatio || 1;
-  const cw = canvas.clientWidth, ch = canvas.clientHeight;
-  canvas.width = cw * dpr; canvas.height = ch * dpr;
-  const g = canvas.getContext('2d');
-  g.scale(dpr, dpr);
-  const img = g.createImageData(cw, ch);
-  for (let x = 0; x < cw; x++) {
-    const fi = Math.floor(x / cw * numFrames);
-    for (let y = 0; y < ch; y++) {
-      const bi = numBins - 1 - Math.floor(y / ch * numBins);
-      const v = mag[fi * numBins + bi];
-      const [r, gv, b] = _cmap(v);
-      const idx = (y * cw + x) * 4;
-      img.data[idx] = r; img.data[idx+1] = gv; img.data[idx+2] = b; img.data[idx+3] = 255;
-    }
-  }
-  g.putImageData(img, 0, 0);
-  // Frequency labels
-  g.fillStyle = '#fffc'; g.font = '10px sans-serif';
-  [0, 2000, 4000, 6000, 8000, 10000, 12000].forEach(hz => {
-    if (hz > sr / 2) return;
-    const y = ch - (hz / (sr / 2)) * ch;
-    g.fillText(hz >= 1000 ? (hz/1000)+'k' : hz+'', 4, y + 3);
-    g.strokeStyle = '#fff3'; g.beginPath(); g.moveTo(0, y); g.lineTo(cw, y); g.stroke();
+function _initWavesurfer(blob) {
+  if (wavesurfer) wavesurfer.destroy();
+  const url = URL.createObjectURL(blob);
+  wavesurfer = WaveSurfer.create({
+    container: '#waveform',
+    waveColor: '#3b82f6',
+    progressColor: '#1d4ed8',
+    height: 80,
+    barWidth: 2,
+    barGap: 1,
+    barRadius: 2,
+    url: url,
   });
-}
-
-function _fft(re, im, n) {
-  for (let i = 1, j = 0; i < n; i++) {
-    let bit = n >> 1;
-    while (j & bit) { j ^= bit; bit >>= 1; }
-    j ^= bit;
-    if (i < j) { [re[i],re[j]] = [re[j],re[i]]; [im[i],im[j]] = [im[j],im[i]]; }
-  }
-  for (let len = 2; len <= n; len <<= 1) {
-    const ang = -2 * Math.PI / len;
-    const wR = Math.cos(ang), wI = Math.sin(ang);
-    for (let i = 0; i < n; i += len) {
-      let cR = 1, cI = 0;
-      for (let j = 0; j < (len >> 1); j++) {
-        const uR = re[i+j], uI = im[i+j];
-        const vR = re[i+j+(len>>1)]*cR - im[i+j+(len>>1)]*cI;
-        const vI = re[i+j+(len>>1)]*cI + im[i+j+(len>>1)]*cR;
-        re[i+j] = uR+vR; im[i+j] = uI+vI;
-        re[i+j+(len>>1)] = uR-vR; im[i+j+(len>>1)] = uI-vI;
-        const nR = cR*wR - cI*wI; cI = cR*wI + cI*wR; cR = nR;
-      }
-    }
-  }
-}
-
-function _cmap(t) {
-  // Magma-like colormap
-  t = Math.max(0, Math.min(1, t));
-  const r = Math.round(Math.min(255, t < 0.5 ? t*2*120 : 120 + (t-0.5)*2*135));
-  const g = Math.round(Math.min(255, t < 0.3 ? 0 : t < 0.7 ? (t-0.3)/0.4*180 : 180 + (t-0.7)/0.3*75));
-  const b = Math.round(Math.min(255, t < 0.25 ? t*4*180 : t < 0.6 ? 180 - (t-0.25)/0.35*130 : 50 + (t-0.6)/0.4*205));
-  return [r, g, b];
+  wavesurfer.registerPlugin(
+    WaveSurfer.Spectrogram.create({
+      container: '#spectrogram',
+      height: 160,
+      splitChannels: false,
+      labels: true,
+    })
+  );
+  wavesurfer.on('ready', () => {
+    const dur = wavesurfer.getDuration();
+    const sizeKB = (blob.size / 1024).toFixed(0);
+    document.getElementById('audio-meta').textContent = `${dur.toFixed(1)}s · ${sizeKB} KB · WAV`;
+  });
 }
 
 // ── Start ───────────────────────────────────────────────────────────────────
