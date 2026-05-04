@@ -3,333 +3,342 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OmniVoice TTS</title>
+<title>SepBox TTS</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e5e5e5;min-height:100vh}
-.container{max-width:800px;margin:0 auto;padding:24px 16px}
-h1{font-size:24px;font-weight:600;margin-bottom:4px}
-.subtitle{color:#737373;font-size:14px;margin-bottom:32px}
-.card{background:#141414;border:1px solid #262626;border-radius:12px;padding:20px;margin-bottom:16px}
-.card h2{font-size:14px;font-weight:600;color:#a3a3a3;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:16px}
-label{display:block;font-size:13px;color:#a3a3a3;margin-bottom:6px}
-textarea,input[type=text],select{width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;color:#e5e5e5;padding:10px 12px;font-size:14px;font-family:inherit;resize:vertical}
-textarea:focus,input[type=text]:focus,select:focus{outline:none;border-color:#3b82f6}
-textarea{min-height:80px}
-.row{display:flex;gap:12px}
-.row > *{flex:1}
-.presets{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
-.preset-btn{background:#1a1a1a;border:1px solid #333;border-radius:20px;color:#a3a3a3;padding:6px 14px;font-size:12px;cursor:pointer;transition:all .15s}
-.preset-btn:hover{border-color:#3b82f6;color:#e5e5e5}
-.preset-btn.active{background:#3b82f6;border-color:#3b82f6;color:#fff}
-.upload-zone{border:2px dashed #333;border-radius:8px;padding:24px;text-align:center;cursor:pointer;transition:all .15s;position:relative}
-.upload-zone:hover{border-color:#3b82f6}
-.upload-zone.has-file{border-color:#22c55e;border-style:solid}
-.upload-zone input{position:absolute;inset:0;opacity:0;cursor:pointer}
-.upload-zone .icon{font-size:24px;margin-bottom:8px}
-.upload-zone .label{font-size:13px;color:#737373}
-.upload-zone .filename{font-size:13px;color:#22c55e;margin-top:4px}
-.generate-btn{width:100%;background:#3b82f6;border:none;border-radius:8px;color:#fff;padding:14px;font-size:15px;font-weight:600;cursor:pointer;transition:background .15s;margin-top:8px}
+
+/* Layout */
+.layout{display:flex;height:100vh;overflow:hidden}
+.sidebar{width:280px;min-width:280px;background:#111;border-right:1px solid #1e1e1e;display:flex;flex-direction:column}
+.main{flex:1;display:flex;flex-direction:column;overflow-y:auto;padding:24px 32px}
+
+/* Sidebar */
+.sidebar-header{padding:20px;border-bottom:1px solid #1e1e1e}
+.sidebar-header h2{font-size:13px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:1px}
+.sidebar-body{flex:1;overflow-y:auto;padding:12px}
+
+.speaker-card{background:#181818;border:1px solid #252525;border-radius:10px;padding:14px 16px;margin-bottom:8px;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:space-between}
+.speaker-card:hover{border-color:#3b82f6;background:#1a1a2a}
+.speaker-card.selected{border-color:#3b82f6;background:#1a2040}
+.speaker-card .name{font-size:14px;font-weight:500;color:#ddd}
+.speaker-card .play-btn{width:32px;height:32px;border-radius:50%;background:#252525;border:1px solid #333;color:#aaa;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;font-size:12px;flex-shrink:0}
+.speaker-card .play-btn:hover{background:#3b82f6;border-color:#3b82f6;color:#fff}
+
+.sidebar-footer{padding:16px;border-top:1px solid #1e1e1e}
+.upload-btn{width:100%;background:#181818;border:1px dashed #333;border-radius:10px;color:#888;padding:12px;font-size:13px;cursor:pointer;transition:all .15s;text-align:center}
+.upload-btn:hover{border-color:#3b82f6;color:#bbb}
+
+/* Main content */
+.main h1{font-size:22px;font-weight:600;margin-bottom:4px}
+.main .subtitle{color:#666;font-size:13px;margin-bottom:24px}
+
+/* Prompt presets */
+.section{margin-bottom:20px}
+.section-label{font-size:12px;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
+.preset-list{display:flex;flex-direction:column;gap:8px}
+.preset-row{background:#141414;border:1px solid #222;border-radius:10px;padding:12px 16px;cursor:pointer;transition:all .15s;font-size:13px;color:#aaa}
+.preset-row:hover{border-color:#3b82f6;color:#ddd}
+.preset-row.selected{border-color:#3b82f6;background:#1a1a2a;color:#fff}
+.preset-row .preset-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Text input */
+.text-input{width:100%;background:#141414;border:1px solid #222;border-radius:10px;color:#e5e5e5;padding:14px 16px;font-size:14px;font-family:inherit;resize:vertical;min-height:100px;max-height:300px}
+.text-input:focus{outline:none;border-color:#3b82f6}
+.text-input::placeholder{color:#555}
+
+/* Generation params */
+.params-grid{display:flex;gap:16px;flex-wrap:wrap}
+.param-group{flex:1;min-width:140px}
+.param-group label{display:block;font-size:11px;color:#666;margin-bottom:6px;text-transform:uppercase;letter-spacing:.3px}
+.param-group input,.param-group select{width:100%;background:#141414;border:1px solid #222;border-radius:8px;color:#e5e5e5;padding:10px 12px;font-size:13px;font-family:inherit}
+.param-group input:focus,.param-group select:focus{outline:none;border-color:#3b82f6}
+.param-group select option{background:#141414;color:#e5e5e5}
+
+/* Generate button */
+.generate-btn{width:100%;background:#3b82f6;border:none;border-radius:10px;color:#fff;padding:14px;font-size:15px;font-weight:600;cursor:pointer;transition:background .15s;margin-top:4px}
 .generate-btn:hover{background:#2563eb}
-.generate-btn:disabled{background:#262626;color:#525252;cursor:not-allowed}
-.player{margin-top:16px}
-.player audio{width:100%;border-radius:8px;margin-top:8px}
-.player .meta{display:flex;justify-content:space-between;font-size:12px;color:#525252;margin-top:6px}
-.ref-player{margin-top:12px}
-.ref-player audio{width:100%;border-radius:8px;margin-top:4px;height:36px}
-.error{background:#450a0a;border:1px solid #7f1d1d;border-radius:8px;padding:12px;color:#fca5a5;font-size:13px;margin-top:12px}
+.generate-btn:disabled{background:#1e1e1e;color:#444;cursor:not-allowed}
+
+/* Floating player */
+.floating-player{position:fixed;bottom:20px;right:20px;width:360px;background:#181818;border:1px solid #252525;border-radius:14px;padding:16px;box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:100;display:none}
+.floating-player.visible{display:block}
+.floating-player .fp-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.floating-player .fp-title{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.5px}
+.floating-player .fp-close{background:none;border:none;color:#666;cursor:pointer;font-size:16px;padding:4px}
+.floating-player .fp-close:hover{color:#aaa}
+.floating-player audio{width:100%;border-radius:8px;height:36px}
+.floating-player .fp-meta{display:flex;justify-content:space-between;margin-top:8px;font-size:11px;color:#555}
+.floating-player .fp-download{color:#3b82f6;text-decoration:none}
+
+/* Error */
+.error{background:#2a1010;border:1px solid #5c1a1a;border-radius:10px;padding:14px;color:#f87171;font-size:13px;margin-top:12px}
+
+/* Spinner */
 .spinner{display:inline-block;width:16px;height:16px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:8px}
 @keyframes spin{to{transform:rotate(360deg)}}
-.tabs{display:flex;gap:0;margin-bottom:16px}
-.tab{flex:1;background:#1a1a1a;border:1px solid #333;padding:10px;text-align:center;font-size:13px;font-weight:500;cursor:pointer;color:#a3a3a3;transition:all .15s}
-.tab:first-child{border-radius:8px 0 0 8px}
-.tab:last-child{border-radius:0 8px 8px 0}
-.tab.active{background:#3b82f6;border-color:#3b82f6;color:#fff}
-.tab-content{display:none}
-.tab-content.active{display:block}
-.profile-section-label{font-size:11px;color:#525252;text-transform:uppercase;letter-spacing:0.5px;margin:12px 0 6px}
-.empty-state{font-size:13px;color:#525252;padding:12px 0}
+
+/* Upload modal overlay */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:none;align-items:center;justify-content:center}
+.modal-overlay.visible{display:flex}
+.modal{background:#181818;border:1px solid #252525;border-radius:14px;padding:24px;width:400px;max-width:90vw}
+.modal h3{font-size:16px;font-weight:600;margin-bottom:16px}
+.modal label{display:block;font-size:12px;color:#888;margin-bottom:6px}
+.modal input[type=text],.modal input[type=file]{width:100%;background:#141414;border:1px solid #222;border-radius:8px;color:#e5e5e5;padding:10px 12px;font-size:13px;margin-bottom:12px}
+.modal input[type=file]{padding:8px;cursor:pointer}
+.modal .btn-row{display:flex;gap:10px;justify-content:flex-end;margin-top:8px}
+.modal .btn-cancel{background:#252525;border:none;border-radius:8px;color:#aaa;padding:10px 20px;cursor:pointer;font-size:13px}
+.modal .btn-submit{background:#3b82f6;border:none;border-radius:8px;color:#fff;padding:10px 20px;cursor:pointer;font-size:13px;font-weight:600}
+.modal .btn-submit:hover{background:#2563eb}
+.modal .btn-cancel:hover{background:#333}
+
+/* Responsive */
+@media(max-width:768px){
+  .layout{flex-direction:column}
+  .sidebar{width:100%;min-width:unset;max-height:200px;border-right:none;border-bottom:1px solid #1e1e1e}
+  .sidebar-body{display:flex;overflow-x:auto;gap:8px;padding:8px}
+  .speaker-card{min-width:140px;margin-bottom:0}
+  .floating-player{width:calc(100% - 32px);left:16px;right:16px}
+}
 </style>
 </head>
 <body>
-<div class="container">
-  <h1>OmniVoice TTS</h1>
-  <p class="subtitle">Text-to-speech with voice cloning</p>
 
-  <!-- Mode tabs -->
-  <div class="tabs">
-    <div class="tab active" data-mode="design">Voice Design</div>
-    <div class="tab" data-mode="clone">Voice Clone</div>
-  </div>
-
-  <!-- Design mode -->
-  <div id="design-panel" class="tab-content active">
-    <div class="card">
-      <h2>Voice Preset</h2>
-      <div class="presets" id="presets"></div>
+<div class="layout">
+  <!-- Sidebar: Speakers -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h2>Speakers</h2>
     </div>
-    <div class="card">
-      <h2>Custom Instructions</h2>
-      <label for="instructions">Override preset with custom attributes</label>
-      <input type="text" id="instructions" placeholder="female, british accent, young adult, high pitch">
+    <div class="sidebar-body" id="speaker-list">
+      <!-- populated by JS -->
+    </div>
+    <div class="sidebar-footer">
+      <div class="upload-btn" onclick="showUploadModal()">+ Upload Speaker</div>
     </div>
   </div>
 
-  <!-- Clone mode -->
-  <div id="clone-panel" class="tab-content">
-    <div class="card">
-      <h2>Speaker Profile</h2>
+  <!-- Main Content -->
+  <div class="main">
+    <h1>SepBox TTS</h1>
+    <p class="subtitle">Text-to-speech generation</p>
 
-      <!-- Saved profiles (loaded from API) -->
-      <div class="profile-section-label">Saved Profiles</div>
-      <div class="presets" id="profile-list">
-        <span class="empty-state">Loading profiles...</span>
+    <!-- Prompt Presets -->
+    <div class="section">
+      <div class="section-label">Prompt Preset</div>
+      <div class="preset-list" id="preset-list">
+        <!-- populated by JS -->
       </div>
+    </div>
 
-      <!-- Custom upload -->
-      <div class="profile-section-label" style="margin-top:16px">One-shot Upload</div>
-      <div class="presets" style="margin-bottom:12px">
-        <div class="preset-btn" id="btn-custom" onclick="selectProfile('__custom__')">+ Custom Upload</div>
-      </div>
+    <!-- Text Input -->
+    <div class="section">
+      <div class="section-label">Text to Synthesize</div>
+      <textarea class="text-input" id="text-input" placeholder="Enter text or select a preset above..."></textarea>
+    </div>
 
-      <div id="custom-upload" style="display:none">
-        <div class="upload-zone" id="upload-zone">
-          <input type="file" id="ref-audio" accept="audio/*">
-          <div class="icon">+</div>
-          <div class="label">Drop or click to upload reference audio</div>
-          <div class="filename" id="ref-filename"></div>
+    <!-- Generation Params -->
+    <div class="section">
+      <div class="section-label">Generation Params</div>
+      <div class="params-grid">
+        <div class="param-group">
+          <label>Language</label>
+          <select id="param-language">
+            <option value="en" selected>English</option>
+            <option value="ms">Malay</option>
+            <option value="mixed">Mixed</option>
+          </select>
         </div>
-        <div class="ref-player" id="custom-player-wrap" style="display:none">
-          <audio id="custom-player" controls></audio>
+        <div class="param-group">
+          <label>Temperature</label>
+          <input type="number" id="param-temp" value="0.3" min="0" max="2" step="0.1">
         </div>
-        <div style="margin-top:12px">
-          <label for="ref-text">Reference transcript (required)</label>
-          <input type="text" id="ref-text" placeholder="Exact transcript of the reference audio" required>
+        <div class="param-group">
+          <label>Top P</label>
+          <input type="number" id="param-topp" value="1.0" min="0" max="1" step="0.05">
+        </div>
+        <div class="param-group">
+          <label>Rep. Penalty</label>
+          <input type="number" id="param-reppen" value="2.0" min="0" max="5" step="0.1">
+        </div>
+        <div class="param-group">
+          <label>Freq. Penalty</label>
+          <input type="number" id="param-freqpen" value="0.3" min="0" max="5" step="0.1">
+        </div>
+        <div class="param-group">
+          <label>Min P</label>
+          <input type="number" id="param-minp" value="0.05" min="0" max="1" step="0.01">
+        </div>
+        <div class="param-group">
+          <label>Max Tokens</label>
+          <input type="number" id="param-maxtokens" value="1000" min="1" max="10000" step="100">
+        </div>
+        <div class="param-group">
+          <label>Speed</label>
+          <input type="number" id="param-speed" value="1.0" min="0.25" max="4.0" step="0.25">
         </div>
       </div>
     </div>
+
+    <!-- Generate -->
+    <button class="generate-btn" id="generate-btn" onclick="generate()">Generate</button>
+    <div id="error-box"></div>
   </div>
+</div>
 
-  <!-- Text input -->
-  <div class="card">
-    <h2>Text to Synthesize</h2>
-    <textarea id="text-input" placeholder="Enter the text you want to convert to speech..." rows="4">Hello, this is a test of the OmniVoice text-to-speech system. The quick brown fox jumps over the lazy dog.</textarea>
+<!-- Floating Player -->
+<div class="floating-player" id="floating-player">
+  <div class="fp-header">
+    <span class="fp-title">Now Playing</span>
+    <button class="fp-close" onclick="hidePlayer()">&times;</button>
   </div>
-
-  <!-- Settings -->
-  <div class="card">
-    <h2>Settings</h2>
-    <div class="row">
-      <div>
-        <label for="num-step">Quality (steps)</label>
-        <select id="num-step">
-          <option value="8">Good (8)</option>
-          <option value="16" selected>High (16)</option>
-          <option value="32">Best (32)</option>
-        </select>
-      </div>
-      <div>
-        <label for="speed">Speed</label>
-        <select id="speed">
-          <option value="0.5">0.5x</option>
-          <option value="0.75">0.75x</option>
-          <option value="1.0" selected>1.0x</option>
-          <option value="1.25">1.25x</option>
-          <option value="1.5">1.5x</option>
-          <option value="2.0">2.0x</option>
-        </select>
-      </div>
-      <div>
-        <label for="format">Format</label>
-        <select id="format">
-          <option value="wav" selected>WAV</option>
-          <option value="mp3">MP3</option>
-          <option value="opus">Opus</option>
-        </select>
-      </div>
-    </div>
+  <audio id="audio-player" controls></audio>
+  <div class="fp-meta">
+    <span id="audio-meta"></span>
+    <a id="download-link" class="fp-download" download="speech.wav">Download</a>
   </div>
+</div>
 
-  <!-- Generate -->
-  <button class="generate-btn" id="generate-btn" onclick="generate()">
-    Generate Speech
-  </button>
-
-  <div id="error-box"></div>
-
-  <!-- Player -->
-  <div class="player card" id="player" style="display:none">
-    <h2>Result</h2>
-    <audio id="audio-player" controls></audio>
-    <div class="meta">
-      <span id="audio-meta"></span>
-      <a id="download-link" download="speech.wav">Download</a>
+<!-- Upload Modal -->
+<div class="modal-overlay" id="upload-modal">
+  <div class="modal">
+    <h3>Upload Speaker</h3>
+    <label>Voice Name</label>
+    <input type="text" id="upload-name" placeholder="e.g. my_voice">
+    <label>Audio File (WAV)</label>
+    <input type="file" id="upload-file" accept="audio/*,.wav">
+    <div class="btn-row">
+      <button class="btn-cancel" onclick="hideUploadModal()">Cancel</button>
+      <button class="btn-submit" onclick="uploadSpeaker()">Upload</button>
     </div>
   </div>
 </div>
 
 <script>
-const PRESETS = [
-  'alloy','ash','ballad','cedar','coral','echo',
-  'fable','marin','nova','onyx','sage','shimmer','verse'
-];
-let currentMode = 'design';
-let selectedPreset = 'alloy';
-let selectedProfile = null; // profile_id or '__custom__'
+// ── State ──────────────────────────────────────────────────────────────────
+let speakers = [];
+let quotes = [];
+let selectedSpeaker = null;
 
-// ── Build preset buttons ──────────────────────────────────────────────────
-const presetsEl = document.getElementById('presets');
-PRESETS.forEach(p => {
-  const btn = document.createElement('div');
-  btn.className = 'preset-btn' + (p === selectedPreset ? ' active' : '');
-  btn.textContent = p;
-  btn.onclick = () => {
-    document.querySelectorAll('#presets .preset-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    selectedPreset = p;
-    document.getElementById('instructions').value = '';
-  };
-  presetsEl.appendChild(btn);
-});
+// ── Init ───────────────────────────────────────────────────────────────────
+async function init() {
+  await Promise.all([loadSpeakers(), loadQuotes()]);
+}
 
-// ── Load profiles from API ────────────────────────────────────────────────
-async function loadProfiles() {
-  const listEl = document.getElementById('profile-list');
+// ── Load speakers from GET /voices ──────────────────────────────────────────
+async function loadSpeakers() {
   try {
-    const res = await fetch('/v1/voices');
+    const res = await fetch('/voices');
     const data = await res.json();
-    const profiles = (data.voices || []).filter(v => v.profile_id);
-
-    listEl.innerHTML = '';
-    if (profiles.length === 0) {
-      listEl.innerHTML = '<span class="empty-state">No profiles saved yet.</span>';
-      return;
+    speakers = data.voices || [];
+    renderSpeakers();
+    if (speakers.length && !selectedSpeaker) {
+      selectSpeaker(speakers[0].id);
     }
-
-    profiles.forEach(p => {
-      const btn = document.createElement('div');
-      btn.className = 'preset-btn';
-      btn.textContent = p.profile_id;
-      btn.dataset.profileId = p.profile_id;
-      btn.onclick = () => selectProfile(p.profile_id);
-      listEl.appendChild(btn);
-    });
-
-    // Auto-select first profile
-    selectProfile(profiles[0].profile_id);
   } catch (e) {
-    listEl.innerHTML = '<span class="empty-state">Failed to load profiles.</span>';
+    console.error('Failed to load speakers:', e);
   }
 }
 
-function selectProfile(id) {
-  selectedProfile = id;
-  // Update button states
-  document.querySelectorAll('#profile-list .preset-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.profileId === id);
+function renderSpeakers() {
+  const el = document.getElementById('speaker-list');
+  el.innerHTML = '';
+  speakers.forEach(s => {
+    const card = document.createElement('div');
+    card.className = 'speaker-card' + (selectedSpeaker === s.id ? ' selected' : '');
+    card.innerHTML = `
+      <span class="name">${esc(s.name)}</span>
+      <div class="play-btn" onclick="event.stopPropagation();previewVoice('${s.id}')" title="Preview">&#9654;</div>
+    `;
+    card.onclick = () => selectSpeaker(s.id);
+    el.appendChild(card);
   });
-  document.getElementById('btn-custom').classList.toggle('active', id === '__custom__');
-  document.getElementById('custom-upload').style.display = id === '__custom__' ? 'block' : 'none';
 }
 
-// ── Tab switching ─────────────────────────────────────────────────────────
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.onclick = () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    currentMode = tab.dataset.mode;
-    document.getElementById(currentMode + '-panel').classList.add('active');
-  };
-});
+function selectSpeaker(id) {
+  selectedSpeaker = id;
+  renderSpeakers();
+}
 
-// ── Custom file upload ────────────────────────────────────────────────────
-const refAudioInput = document.getElementById('ref-audio');
-const uploadZone = document.getElementById('upload-zone');
-refAudioInput.onchange = () => {
-  if (refAudioInput.files.length) {
-    uploadZone.classList.add('has-file');
-    document.getElementById('ref-filename').textContent = refAudioInput.files[0].name;
-    const url = URL.createObjectURL(refAudioInput.files[0]);
-    document.getElementById('custom-player').src = url;
-    document.getElementById('custom-player-wrap').style.display = 'block';
+// ── Load quotes from GET /api/quotes ────────────────────────────────────────
+async function loadQuotes() {
+  try {
+    const res = await fetch('/api/quotes');
+    const data = await res.json();
+    quotes = data.quotes || [];
+    renderPresets();
+  } catch (e) {
+    console.error('Failed to load quotes:', e);
   }
-};
+}
 
-// ── Generate ──────────────────────────────────────────────────────────────
+function renderPresets() {
+  const el = document.getElementById('preset-list');
+  el.innerHTML = '';
+  quotes.forEach((q, i) => {
+    const row = document.createElement('div');
+    row.className = 'preset-row';
+    row.textContent = q;
+    row.onclick = () => {
+      document.getElementById('text-input').value = q;
+      el.querySelectorAll('.preset-row').forEach(r => r.classList.remove('selected'));
+      row.classList.add('selected');
+    };
+    el.appendChild(row);
+  });
+}
+
+// ── Preview voice (small generate call) ─────────────────────────────────────
+async function previewVoice(id) {
+  try {
+    const res = await fetch('/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'Hello, this is a preview.', voice_ref_path: id, max_tokens: 200 }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.play();
+  } catch (e) {
+    console.error('Preview failed:', e);
+  }
+}
+
+// ── Generate via POST /generate ─────────────────────────────────────────────
 async function generate() {
   const btn = document.getElementById('generate-btn');
   const errorBox = document.getElementById('error-box');
-  const player = document.getElementById('player');
+  const player = document.getElementById('floating-player');
   const audioEl = document.getElementById('audio-player');
 
   errorBox.innerHTML = '';
-  player.style.display = 'none';
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Generating...';
 
   try {
     const text = document.getElementById('text-input').value.trim();
-    const numStep = parseInt(document.getElementById('num-step').value);
-    const speed = parseFloat(document.getElementById('speed').value);
-    const fmt = document.getElementById('format').value;
+    if (!text) throw new Error('Please enter text or select a preset');
+    if (!selectedSpeaker) throw new Error('Please select a speaker');
 
-    if (!text) throw new Error('Please enter some text');
+    const body = {
+      text,
+      voice_ref_path: selectedSpeaker,
+      language: document.getElementById('param-language').value,
+      temperature: parseFloat(document.getElementById('param-temp').value) || 0.3,
+      top_p: parseFloat(document.getElementById('param-topp').value) || 1.0,
+      repetition_penalty: parseFloat(document.getElementById('param-reppen').value) || 2.0,
+      frequency_penalty: parseFloat(document.getElementById('param-freqpen').value) || 0.3,
+      min_p: parseFloat(document.getElementById('param-minp').value) || 0.05,
+      max_tokens: parseInt(document.getElementById('param-maxtokens').value) || 1000,
+    };
 
-    let response;
-
-    if (currentMode === 'clone') {
-      if (!selectedProfile) throw new Error('Please select a speaker profile');
-
-      if (selectedProfile === '__custom__') {
-        // One-shot clone via /v1/audio/speech/clone
-        const refText = document.getElementById('ref-text').value.trim();
-        if (!refText) throw new Error('Please enter the reference transcript');
-        if (!refAudioInput.files.length) throw new Error('Please upload reference audio');
-
-        const formData = new FormData();
-        formData.append('text', text);
-        formData.append('ref_text', refText);
-        formData.append('ref_audio', refAudioInput.files[0]);
-        formData.append('speed', speed);
-        formData.append('num_step', numStep);
-        response = await fetch('/v1/audio/speech/clone', { method: 'POST', body: formData });
-
-      } else {
-        // Saved profile via /v1/audio/speech
-        response = await fetch('/v1/audio/speech', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'omnivoice',
-            input: text,
-            voice: selectedProfile,
-            response_format: fmt,
-            speed,
-            num_step: numStep,
-          }),
-        });
-      }
-
-    } else {
-      // Design mode
-      const body = {
-        model: 'omnivoice',
-        input: text,
-        voice: selectedPreset,
-        response_format: fmt,
-        speed,
-        num_step: numStep,
-      };
-      const instructions = document.getElementById('instructions').value.trim();
-      if (instructions) body.instructions = instructions;
-
-      response = await fetch('/v1/audio/speech', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-    }
+    const response = await fetch('/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
 
     if (!response.ok) {
       let detail = `HTTP ${response.status}`;
@@ -340,29 +349,72 @@ async function generate() {
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     audioEl.src = url;
-
-    const ext = fmt === 'opus' ? 'ogg' : (fmt === 'mp3' ? 'mp3' : 'wav');
     document.getElementById('download-link').href = url;
-    document.getElementById('download-link').download = `speech.${ext}`;
 
     const sizeKB = (blob.size / 1024).toFixed(0);
     audioEl.addEventListener('loadedmetadata', () => {
-      document.getElementById('audio-meta').textContent =
-        `${audioEl.duration.toFixed(1)}s · ${sizeKB} KB · ${fmt.toUpperCase()}`;
+      document.getElementById('audio-meta').textContent = `${audioEl.duration.toFixed(1)}s · ${sizeKB} KB · WAV`;
     }, { once: true });
 
-    player.style.display = 'block';
+    player.classList.add('visible');
     audioEl.play().catch(() => {});
   } catch (e) {
-    errorBox.innerHTML = `<div class="error">${e.message}</div>`;
+    errorBox.innerHTML = `<div class="error">${esc(e.message)}</div>`;
   } finally {
     btn.disabled = false;
-    btn.innerHTML = 'Generate Speech';
+    btn.innerHTML = 'Generate';
   }
 }
 
-// Init
-loadProfiles();
+// ── Upload modal ────────────────────────────────────────────────────────────
+function showUploadModal() {
+  document.getElementById('upload-modal').classList.add('visible');
+}
+function hideUploadModal() {
+  document.getElementById('upload-modal').classList.remove('visible');
+}
+
+async function uploadSpeaker() {
+  const name = document.getElementById('upload-name').value.trim();
+  const file = document.getElementById('upload-file').files[0];
+  if (!name) return alert('Please enter a voice name');
+  if (!file) return alert('Please select a WAV file');
+
+  const formData = new FormData();
+  formData.append('voice_name', name);
+  formData.append('audio_file', file);
+
+  try {
+    const res = await fetch('/voices', { method: 'POST', body: formData });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error?.message || err.detail || `HTTP ${res.status}`);
+    }
+    hideUploadModal();
+    document.getElementById('upload-name').value = '';
+    document.getElementById('upload-file').value = '';
+    await loadSpeakers();
+    selectSpeaker(name);
+  } catch (e) {
+    alert('Upload failed: ' + e.message);
+  }
+}
+
+// ── Player ──────────────────────────────────────────────────────────────────
+function hidePlayer() {
+  document.getElementById('floating-player').classList.remove('visible');
+  document.getElementById('audio-player').pause();
+}
+
+// ── Utils ───────────────────────────────────────────────────────────────────
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ── Start ───────────────────────────────────────────────────────────────────
+init();
 </script>
 </body>
 </html>
