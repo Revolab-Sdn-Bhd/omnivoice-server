@@ -10,7 +10,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 
 /* Layout */
 .layout{display:flex;height:100vh;overflow:hidden}
-.sidebar{width:280px;min-width:280px;background:#111;border-right:1px solid #1e1e1e;display:flex;flex-direction:column}
+.sidebar{width:224px;min-width:224px;background:#111;border-right:1px solid #1e1e1e;display:flex;flex-direction:column}
 .main{flex:1;display:flex;flex-direction:column;overflow-y:auto;padding:24px 32px}
 
 /* Sidebar */
@@ -36,8 +36,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 /* Prompt presets */
 .section{margin-bottom:20px}
 .section-label{font-size:12px;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
-.preset-list{display:flex;flex-direction:column;gap:8px}
-.preset-row{background:#141414;border:1px solid #222;border-radius:10px;padding:12px 16px;cursor:pointer;transition:all .15s;font-size:13px;color:#aaa}
+.preset-list{display:flex;flex-direction:column;gap:6px;height:240px;overflow-y:auto}
+.cat-group{margin-bottom:4px}
+.cat-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:#141414;border:1px solid #222;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.5px;transition:all .15s;user-select:none}
+.cat-header:hover{border-color:#3b82f6;color:#bbb}
+.cat-header .arrow{transition:transform .2s;font-size:10px}
+.cat-header.open .arrow{transform:rotate(90deg)}
+.cat-items{display:none;padding:4px 0 0 0}
+.cat-items.open{display:flex;flex-direction:column;gap:4px}
+.preset-row{background:#141414;border:1px solid #222;border-radius:8px;padding:10px 14px;cursor:pointer;transition:all .15s;font-size:13px;color:#aaa;margin-left:8px}
 .preset-row:hover{border-color:#3b82f6;color:#ddd}
 .preset-row.selected{border-color:#3b82f6;background:#1a1a2a;color:#fff}
 .preset-row .preset-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -142,40 +149,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
       <div class="section-label">Generation Params</div>
       <div class="params-grid">
         <div class="param-group">
-          <label>Language</label>
-          <select id="param-language">
-            <option value="en" selected>English</option>
-            <option value="ms">Malay</option>
-            <option value="mixed">Mixed</option>
-          </select>
-        </div>
-        <div class="param-group">
           <label>Temperature</label>
           <input type="number" id="param-temp" value="0.3" min="0" max="2" step="0.1">
         </div>
         <div class="param-group">
-          <label>Top P</label>
-          <input type="number" id="param-topp" value="1.0" min="0" max="1" step="0.05">
+          <label>Target LUFS</label>
+          <input type="number" id="param-lufs" value="-23" min="-60" max="0" step="1">
         </div>
         <div class="param-group">
-          <label>Rep. Penalty</label>
-          <input type="number" id="param-reppen" value="2.0" min="0" max="5" step="0.1">
-        </div>
-        <div class="param-group">
-          <label>Freq. Penalty</label>
-          <input type="number" id="param-freqpen" value="0.3" min="0" max="5" step="0.1">
-        </div>
-        <div class="param-group">
-          <label>Min P</label>
-          <input type="number" id="param-minp" value="0.05" min="0" max="1" step="0.01">
-        </div>
-        <div class="param-group">
-          <label>Max Tokens</label>
-          <input type="number" id="param-maxtokens" value="1000" min="1" max="10000" step="100">
-        </div>
-        <div class="param-group">
-          <label>Speed</label>
-          <input type="number" id="param-speed" value="1.0" min="0.25" max="4.0" step="0.25">
+          <label>Trim Front (s)</label>
+          <input type="number" id="param-trim" value="0.5" min="0" max="5" step="0.1">
         </div>
       </div>
     </div>
@@ -205,6 +188,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <h3>Upload Speaker</h3>
     <label>Voice Name</label>
     <input type="text" id="upload-name" placeholder="e.g. my_voice">
+    <label>Transcript</label>
+    <input type="text" id="upload-ref-text" placeholder="What is being said in the audio...">
     <label>Audio File (WAV)</label>
     <input type="file" id="upload-file" accept="audio/*,.wav">
     <div class="btn-row">
@@ -218,6 +203,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 // ── State ──────────────────────────────────────────────────────────────────
 let speakers = [];
 let quotes = [];
+let categories = {};
 let selectedSpeaker = null;
 
 // ── Init ───────────────────────────────────────────────────────────────────
@@ -266,6 +252,7 @@ async function loadQuotes() {
     const res = await fetch('/api/quotes');
     const data = await res.json();
     quotes = data.quotes || [];
+    categories = data.categories || {};
     renderPresets();
   } catch (e) {
     console.error('Failed to load quotes:', e);
@@ -275,16 +262,39 @@ async function loadQuotes() {
 function renderPresets() {
   const el = document.getElementById('preset-list');
   el.innerHTML = '';
-  quotes.forEach((q, i) => {
-    const row = document.createElement('div');
-    row.className = 'preset-row';
-    row.textContent = q;
-    row.onclick = () => {
-      document.getElementById('text-input').value = q;
-      el.querySelectorAll('.preset-row').forEach(r => r.classList.remove('selected'));
-      row.classList.add('selected');
+  const catOrder = ['Tone', 'Digits', 'Entity', 'Code-mixing', 'Quoted words', 'Long text', 'General'];
+  catOrder.forEach(cat => {
+    const items = categories[cat];
+    if (!items || !items.length) return;
+    const group = document.createElement('div');
+    group.className = 'cat-group';
+
+    const header = document.createElement('div');
+    header.className = 'cat-header';
+    header.innerHTML = `<span>${esc(cat)}</span><span class="arrow">&#9654;</span>`;
+    header.onclick = () => {
+      header.classList.toggle('open');
+      itemsEl.classList.toggle('open');
     };
-    el.appendChild(row);
+
+    const itemsEl = document.createElement('div');
+    itemsEl.className = 'cat-items';
+    items.forEach(q => {
+      const row = document.createElement('div');
+      row.className = 'preset-row';
+      row.textContent = q;
+      row.onclick = (e) => {
+        e.stopPropagation();
+        document.getElementById('text-input').value = q;
+        el.querySelectorAll('.preset-row').forEach(r => r.classList.remove('selected'));
+        row.classList.add('selected');
+      };
+      itemsEl.appendChild(row);
+    });
+
+    group.appendChild(header);
+    group.appendChild(itemsEl);
+    el.appendChild(group);
   });
 }
 
@@ -325,13 +335,9 @@ async function generate() {
     const body = {
       text,
       voice_ref_path: selectedSpeaker,
-      language: document.getElementById('param-language').value,
       temperature: parseFloat(document.getElementById('param-temp').value) || 0.3,
-      top_p: parseFloat(document.getElementById('param-topp').value) || 1.0,
-      repetition_penalty: parseFloat(document.getElementById('param-reppen').value) || 2.0,
-      frequency_penalty: parseFloat(document.getElementById('param-freqpen').value) || 0.3,
-      min_p: parseFloat(document.getElementById('param-minp').value) || 0.05,
-      max_tokens: parseInt(document.getElementById('param-maxtokens').value) || 1000,
+      target_lufs: parseFloat(document.getElementById('param-lufs').value) || -23,
+      trim_front_seconds: parseFloat(document.getElementById('param-trim').value) || 0.5,
     };
 
     const response = await fetch('/generate', {
@@ -376,12 +382,15 @@ function hideUploadModal() {
 
 async function uploadSpeaker() {
   const name = document.getElementById('upload-name').value.trim();
+  const refText = document.getElementById('upload-ref-text').value.trim();
   const file = document.getElementById('upload-file').files[0];
   if (!name) return alert('Please enter a voice name');
+  if (!refText) return alert('Please enter the transcript');
   if (!file) return alert('Please select a WAV file');
 
   const formData = new FormData();
   formData.append('voice_name', name);
+  formData.append('ref_text', refText);
   formData.append('audio_file', file);
 
   try {
@@ -392,6 +401,7 @@ async function uploadSpeaker() {
     }
     hideUploadModal();
     document.getElementById('upload-name').value = '';
+    document.getElementById('upload-ref-text').value = '';
     document.getElementById('upload-file').value = '';
     await loadSpeakers();
     selectSpeaker(name);
