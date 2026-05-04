@@ -31,29 +31,81 @@ router = APIRouter()
 
 # ── Prompt presets ──────────────────────────────────────────────────────────────
 
-QUOTES = [
-    "How are you doing today?",
-    "My account number is AA212CC8819000ZZ.",
-    "The quick brown fox jumps over the lazy dog.",
-    "She sells seashells by the seashore.",
-    "I have an appointment scheduled for next Tuesday at 3 PM.",
-    "Please transfer five hundred ringgit to account number 1234567890.",
-    "The weather forecast predicts heavy rainfall in the northern regions.",
-    "Welcome to our customer service hotline, how may I assist you?",
-    "Your order has been shipped and will arrive within three to five business days.",
-    "Saya ingin membuat aduan mengenain perkhidmatan yang diterima semalam.",
-    "Terima kasih kerana menghubungi kami, ada apa yang boleh saya bantu?",
-    "This is a longer passage used for testing multi-sentence synthesis. "
-    "It contains several sentences with varying lengths and complexities. "
-    "The purpose is to evaluate how well the system handles extended text input "
-    "while maintaining natural prosody and consistent voice quality throughout.",
-]
+QUOTES: dict[str, list[str]] = {
+    "Tone": [
+        "How are you doing today?",
+        "What time is the meeting?",
+        "Can you help me with this task?",
+        "Do you know where the nearest restaurant is?",
+        "Are you sure about this decision?",
+        "Cik Nurul Amira ada email registered sebagai nurul.amira89@gmail.com, betul ya?",
+        "Okay, terima kasih. By the way, saya perasan ada satu transaction yang saya tak kenal. Boleh check tak RM1,500 transaction pada 18 Februari?",  # noqa: E501
+        "Apa khabar? Bagaimana keadaan kamu?",
+        "Boleh saya tolong?",
+        "That's amazing!",
+        "I can't believe it!",
+        "Wow, what an incredible result!",
+        "This is fantastic news!",
+        "Congratulations on your success!",
+        "Syabas! Tahniah!",
+        "Hebat sangat!",
+    ],
+    "Digits": [
+        "My account number is AA212CC8819000ZZ.",
+        "Your Windows 11 home activation code is YTMG3-N6DKC-DKB77-7M9GH-8HVX7.",
+        "The activation key for Office 365 has been sent to cheelam1829@revolab.ai – also check your spam folder.",  # noqa: E501
+        "Nombor akaun Encik Hafiz ialah 1640-8821-4490, berdaftar atas nama Hafiz bin Kamal.",
+    ],
+    "Entity": [
+        "nurul.amira89@gmail.com",
+        "No. 8, Jalan Setia 3/4, Setia Alam, 40170 Shah Alam",
+        "Encik Rajesh",
+        "Cik Nurul Amira",
+        "Farah Nabila binti Yazid",
+        "Hafiz bin Kamal",
+        "Arif Catering Services",
+        "Maybank Customer Service",
+        "18 Februari",
+        "Nicholas Chua Jun Kit",
+        "Thinesh anak lelaki Narayanasamy",
+        "university of Malaya",
+        "FSKTM",
+        "mamak KLCC",
+        "D-King",
+    ],
+    "Code-mixing": [
+        "Eh, jom makan nasi lemak dekat mamak KLCC near D-King lepas kerja nanti.",
+        "So easy also dunno meh?",
+        "They got sell Nasi Lemak lah, Roti Canai lah, Chapatti lah, everything got lah.",
+        "Kalau nak beli rumah, better check your DSR dulu – Debt Service Ratio kena below 70%.",
+        "Company bagi bonus dua bulan gaji tahun ni, so I plan nak bayar hutang PTPTN dulu.",
+    ],
+    "Quoted words": [
+        "Dia 'on the way' ke 'meeting' tapi tersekat dalam 'jam'!",
+        "Kereta itu mempunyai 'suspension' yang 'sporty' dan 'handling' yang mantap.",
+    ],
+    "Long text": [
+        "Kami perlukan selfie dengan IC dan signature di borang KYC untuk akaun business bawah nama Arif Catering Services.",  # noqa: E501
+        "Farah Nabila binti Yazid ialah kawan Nicholas Chua Jun Kit and Thinesh anak lelaki Narayanasamy. So 3 of them went to university of Malaya to study computer science specialized in AI at FSKTM.",  # noqa: E501
+    ],
+    "General": [
+        "Hi",
+        "Okay, terima kasih sebab call Maybank Customer Service. Have a nice day!",
+        "Baik, terima kasih.",
+        "The file sha1 hash is 4f2d5e7a3b9c8d1e6f4a2b0d3c9e8f7a1d2e3c4f",
+        "The only way to do great work is to love what you do. - Steve Jobs",
+        "The future belongs to those who believe in the beauty of their dreams. - Eleanor Roosevelt",  # noqa: E501
+        "Spread love everywhere you go. Let no one ever come to you without leaving happier. - Mother Teresa",  # noqa: E501
+    ],
+}
 
 
 @router.get("/api/quotes")
 async def get_quotes():
-    """Returns a curated list of test sentences for TTS evaluation."""
-    return {"quotes": QUOTES}
+    """Returns categorized test sentences for TTS evaluation."""
+    # Flatten for backward compat
+    all_quotes = [q for qs in QUOTES.values() for q in qs]
+    return {"quotes": all_quotes, "categories": QUOTES}
 
 
 # ── Request model ──────────────────────────────────────────────────────────────
@@ -73,6 +125,8 @@ class TTSRequest(BaseModel):
     frequency_penalty: float = Field(default=0.3, ge=0.0)
     min_p: float = Field(default=0.05, ge=0.0, le=1.0)
     max_tokens: int = Field(default=1000, ge=1)
+    target_lufs: float = Field(default=-23.0, ge=-60.0, le=0.0)
+    trim_front_seconds: float = Field(default=0.5, ge=0.0, le=5.0)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -209,7 +263,9 @@ async def generate(
             detail=f"Synthesis failed: {e}",
         )
 
-    wav_bytes = tensors_to_wav_bytes(result.tensors)
+    wav_bytes = tensors_to_wav_bytes(
+        result.tensors, target_lufs=body.target_lufs, trim_seconds=body.trim_front_seconds,
+    )
     return Response(
         content=wav_bytes,
         media_type="audio/wav",

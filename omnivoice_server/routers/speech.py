@@ -183,7 +183,9 @@ async def create_speech(
         )
 
     if body.response_format == "wav":
-        audio_bytes = tensors_to_wav_bytes(result.tensors)
+        audio_bytes = tensors_to_wav_bytes(
+            result.tensors, target_lufs=cfg.target_lufs, trim_seconds=cfg.trim_front_seconds,
+        )
         return Response(content=audio_bytes, media_type="audio/wav")
 
     audio_bytes, media_type = encode_tensors(result.tensors, body.response_format)

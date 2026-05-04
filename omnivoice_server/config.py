@@ -160,6 +160,16 @@ class Settings(BaseSettings):
         description="Directory containing voice WAV files",
     )
 
+    # Audio post-processing
+    target_lufs: float = Field(
+        default=-23.0,
+        description="Target loudness (LUFS) for generated audio normalization",
+    )
+    trim_front_seconds: float = Field(
+        default=0.5,
+        description="Seconds to trim from the front of generated audio",
+    )
+
     # Auth
     api_key: str = Field(
         default="",
