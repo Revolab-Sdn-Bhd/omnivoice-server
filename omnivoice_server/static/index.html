@@ -68,7 +68,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .generate-btn:disabled{background:#1e1e1e;color:#444;cursor:not-allowed}
 
 /* Floating player */
-.floating-player{position:fixed;bottom:20px;right:20px;width:360px;background:#181818;border:1px solid #252525;border-radius:14px;padding:16px;box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:100;display:none}
+.floating-player{position:fixed;bottom:20px;right:20px;width:480px;background:#181818;border:1px solid #252525;border-radius:14px;padding:16px;box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:100;display:none}
 .floating-player.visible{display:block}
 .floating-player .fp-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 .floating-player .fp-title{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.5px}
@@ -76,6 +76,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .floating-player .fp-close:hover{color:#aaa}
 .floating-player audio{width:100%;border-radius:8px;height:36px}
 .floating-player .fp-meta{display:flex;justify-content:space-between;margin-top:8px;font-size:11px;color:#555}
+.floating-player canvas{width:100%;height:120px;border-radius:8px;margin-top:10px;background:#111}
 .floating-player .fp-download{color:#3b82f6;text-decoration:none}
 
 /* Error */
@@ -231,6 +232,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <button class="fp-close" onclick="hidePlayer()">&times;</button>
   </div>
   <audio id="audio-player" controls></audio>
+  <canvas id="spectrogram-canvas"></canvas>
   <div class="fp-meta">
     <span id="audio-meta"></span>
     <span>
@@ -436,6 +438,7 @@ async function generate() {
 
     player.classList.add('visible');
     document.getElementById('save-speaker-link').style.display = lastWasDesign ? 'inline' : 'none';
+    renderSpectrogram(blob).catch(() => {});
     audioEl.play().catch(() => {});
   } catch (e) {
     errorBox.innerHTML = `<div class="error">${esc(e.message)}</div>`;
@@ -550,6 +553,96 @@ function esc(s) {
 function _num(id, fallback) {
   const v = parseFloat(document.getElementById(id).value);
   return isFinite(v) ? v : fallback;
+}
+
+// ── Spectrogram ────────────────────────────────────────────────────────────
+async function renderSpectrogram(blob) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
+  ctx.close();
+  const data = buf.getChannelData(0);
+  const sr = buf.sampleRate;
+  const fftSize = 1024;
+  const hop = fftSize >> 1;
+  const win = new Float32Array(fftSize);
+  for (let i = 0; i < fftSize; i++) win[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / (fftSize - 1)));
+  const numFrames = Math.floor((data.length - fftSize) / hop) + 1;
+  const numBins = fftSize >> 1;
+  const mag = new Float32Array(numFrames * numBins);
+  let maxMag = 0;
+  const re = new Float32Array(fftSize);
+  const im = new Float32Array(fftSize);
+  for (let f = 0; f < numFrames; f++) {
+    const off = f * hop;
+    for (let i = 0; i < fftSize; i++) { re[i] = data[off + i] * win[i]; im[i] = 0; }
+    _fft(re, im, fftSize);
+    for (let b = 0; b < numBins; b++) {
+      const m = Math.sqrt(re[b]*re[b] + im[b]*im[b]);
+      const db = 20 * Math.log10(m + 1e-10);
+      const norm = Math.max(0, Math.min(1, (db + 80) / 80));
+      mag[f * numBins + b] = norm;
+      if (norm > maxMag) maxMag = norm;
+    }
+  }
+  const canvas = document.getElementById('spectrogram-canvas');
+  const dpr = window.devicePixelRatio || 1;
+  const cw = canvas.clientWidth, ch = canvas.clientHeight;
+  canvas.width = cw * dpr; canvas.height = ch * dpr;
+  const g = canvas.getContext('2d');
+  g.scale(dpr, dpr);
+  const img = g.createImageData(cw, ch);
+  for (let x = 0; x < cw; x++) {
+    const fi = Math.floor(x / cw * numFrames);
+    for (let y = 0; y < ch; y++) {
+      const bi = numBins - 1 - Math.floor(y / ch * numBins);
+      const v = mag[fi * numBins + bi];
+      const [r, gv, b] = _cmap(v);
+      const idx = (y * cw + x) * 4;
+      img.data[idx] = r; img.data[idx+1] = gv; img.data[idx+2] = b; img.data[idx+3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  // Frequency labels
+  g.fillStyle = '#fffc'; g.font = '10px sans-serif';
+  [0, 2000, 4000, 6000, 8000, 10000, 12000].forEach(hz => {
+    if (hz > sr / 2) return;
+    const y = ch - (hz / (sr / 2)) * ch;
+    g.fillText(hz >= 1000 ? (hz/1000)+'k' : hz+'', 4, y + 3);
+    g.strokeStyle = '#fff3'; g.beginPath(); g.moveTo(0, y); g.lineTo(cw, y); g.stroke();
+  });
+}
+
+function _fft(re, im, n) {
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    while (j & bit) { j ^= bit; bit >>= 1; }
+    j ^= bit;
+    if (i < j) { [re[i],re[j]] = [re[j],re[i]]; [im[i],im[j]] = [im[j],im[i]]; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len;
+    const wR = Math.cos(ang), wI = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cR = 1, cI = 0;
+      for (let j = 0; j < (len >> 1); j++) {
+        const uR = re[i+j], uI = im[i+j];
+        const vR = re[i+j+(len>>1)]*cR - im[i+j+(len>>1)]*cI;
+        const vI = re[i+j+(len>>1)]*cI + im[i+j+(len>>1)]*cR;
+        re[i+j] = uR+vR; im[i+j] = uI+vI;
+        re[i+j+(len>>1)] = uR-vR; im[i+j+(len>>1)] = uI-vI;
+        const nR = cR*wR - cI*wI; cI = cR*wI + cI*wR; cR = nR;
+      }
+    }
+  }
+}
+
+function _cmap(t) {
+  // Magma-like colormap
+  t = Math.max(0, Math.min(1, t));
+  const r = Math.round(Math.min(255, t < 0.5 ? t*2*120 : 120 + (t-0.5)*2*135));
+  const g = Math.round(Math.min(255, t < 0.3 ? 0 : t < 0.7 ? (t-0.3)/0.4*180 : 180 + (t-0.7)/0.3*75));
+  const b = Math.round(Math.min(255, t < 0.25 ? t*4*180 : t < 0.6 ? 180 - (t-0.25)/0.35*130 : 50 + (t-0.6)/0.4*205));
+  return [r, g, b];
 }
 
 // ── Start ───────────────────────────────────────────────────────────────────
