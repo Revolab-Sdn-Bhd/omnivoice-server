@@ -66,6 +66,7 @@ async def list_voices(cfg=Depends(_get_cfg)):
 @router.post("/voices", status_code=status.HTTP_201_CREATED)
 async def upload_voice(
     voice_name: str = Form(..., description="Name for the voice (alphanumeric, dash, underscore)"),
+    ref_text: str = Form(..., min_length=1, description="Transcript of the reference audio"),
     audio_file: UploadFile = File(..., description="Voice reference WAV audio"),
     cfg=Depends(_get_cfg),
 ):
@@ -98,6 +99,10 @@ async def upload_voice(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to save voice file: {e}",
         )
+
+    # Save companion transcript
+    txt_path = voices_dir / f"{sanitized}.txt"
+    txt_path.write_text(ref_text.strip())
 
     return {
         "id": sanitized,

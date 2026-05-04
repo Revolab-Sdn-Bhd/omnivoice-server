@@ -27,7 +27,7 @@ def test_upload_voice(client, sample_audio_bytes):
     """POST /voices uploads a new WAV file."""
     resp = client.post(
         "/voices",
-        data={"voice_name": "new_voice"},
+        data={"voice_name": "new_voice", "ref_text": "Hello world"},
         files={"audio_file": ("new.wav", io.BytesIO(sample_audio_bytes), "audio/wav")},
     )
     assert resp.status_code == 201
@@ -40,7 +40,7 @@ def test_upload_voice_invalid_name(client, sample_audio_bytes):
     """POST /voices rejects names with no valid characters."""
     resp = client.post(
         "/voices",
-        data={"voice_name": "!@#$%"},
+        data={"voice_name": "!@#$%", "ref_text": "test"},
         files={"audio_file": ("f.wav", io.BytesIO(sample_audio_bytes), "audio/wav")},
     )
     assert resp.status_code == 400
@@ -50,7 +50,7 @@ def test_upload_voice_appears_in_list(client, sample_audio_bytes):
     """Uploaded voice appears in GET /voices."""
     client.post(
         "/voices",
-        data={"voice_name": "uploaded"},
+        data={"voice_name": "uploaded", "ref_text": "Test transcript"},
         files={"audio_file": ("f.wav", io.BytesIO(sample_audio_bytes), "audio/wav")},
     )
     resp = client.get("/voices")
