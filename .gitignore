@@ -52,3 +52,4 @@ traces/
 # Voice design test samples (for listening only)
 *_accent.wav
 *_accent.txt
+designed_voice/
