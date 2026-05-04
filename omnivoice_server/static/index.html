@@ -163,9 +163,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
       <div class="section-label">Audio Visualization</div>
       <div id="waveform"></div>
       <div id="spectrogram"></div>
-      <div style="display:flex;gap:10px;margin-top:10px;font-size:12px;color:#888">
+      <div style="display:flex;align-items:center;gap:12px;margin-top:10px;font-size:12px;color:#888">
+        <button id="play-btn" onclick="togglePlay()" style="width:36px;height:36px;border-radius:50%;background:#3b82f6;border:none;color:#fff;font-size:16px;cursor:pointer;flex-shrink:0">&#9654;</button>
         <span id="audio-meta"></span>
-        <span>
+        <span style="margin-left:auto">
           <a id="download-link" style="color:#3b82f6;text-decoration:none" download="speech.wav">Download</a>
           <a id="save-speaker-link" style="display:none;cursor:pointer;color:#3b82f6;text-decoration:none;margin-left:10px" onclick="saveAsSpeaker()">Save as Speaker</a>
         </span>
@@ -493,6 +494,9 @@ function applyDesign() {
 }
 
 // ── Player ──────────────────────────────────────────────────────────────────
+function togglePlay() {
+  if (wavesurfer) wavesurfer.playPause();
+}
 function hidePlayer() {
   document.getElementById('audio-viz').style.display = 'none';
   if (wavesurfer) { wavesurfer.destroy(); wavesurfer = null; }
@@ -559,6 +563,13 @@ function _initWavesurfer(blob) {
     const dur = wavesurfer.getDuration();
     const sizeKB = (blob.size / 1024).toFixed(0);
     document.getElementById('audio-meta').textContent = `${dur.toFixed(1)}s · ${sizeKB} KB · WAV`;
+    wavesurfer.play();
+  });
+  wavesurfer.on('play', () => {
+    document.getElementById('play-btn').innerHTML = '&#10074;&#10074;';
+  });
+  wavesurfer.on('pause', () => {
+    document.getElementById('play-btn').innerHTML = '&#9654;';
   });
 }
 
