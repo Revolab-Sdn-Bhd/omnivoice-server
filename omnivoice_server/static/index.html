@@ -172,10 +172,51 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 
 <!-- Voice Design Modal -->
 <div class="modal-overlay" id="design-modal">
-  <div class="modal">
+  <div class="modal" style="width:460px">
     <h3>Voice Design (Instruct)</h3>
-    <label>Describe the voice you want</label>
-    <input type="text" id="design-instruct" placeholder="e.g. soft female voice, deep male narrator, energetic young adult">
+    <label>Gender</label>
+    <select id="design-gender">
+      <option value="">Any</option>
+      <option value="Male">Male</option>
+      <option value="Female">Female</option>
+    </select>
+    <label>Age</label>
+    <select id="design-age">
+      <option value="">Any</option>
+      <option value="Child">Child</option>
+      <option value="Teenager">Teenager</option>
+      <option value="Young Adult">Young Adult</option>
+      <option value="Middle-aged">Middle-aged</option>
+      <option value="Elderly">Elderly</option>
+    </select>
+    <label>Pitch</label>
+    <select id="design-pitch">
+      <option value="">Any</option>
+      <option value="Very Low Pitch">Very Low</option>
+      <option value="Low Pitch">Low</option>
+      <option value="Moderate Pitch">Moderate</option>
+      <option value="High Pitch">High</option>
+      <option value="Very High Pitch">Very High</option>
+    </select>
+    <label>Accent</label>
+    <select id="design-accent">
+      <option value="">Any</option>
+      <option value="American Accent">American</option>
+      <option value="British Accent">British</option>
+      <option value="Australian Accent">Australian</option>
+      <option value="Chinese Accent">Chinese</option>
+      <option value="Indian Accent">Indian</option>
+      <option value="Japanese Accent">Japanese</option>
+      <option value="Korean Accent">Korean</option>
+      <option value="Malay Accent">Malay</option>
+    </select>
+    <label>Style</label>
+    <select id="design-style">
+      <option value="">Normal</option>
+      <option value="Whisper">Whisper</option>
+    </select>
+    <label>Or type custom instruction</label>
+    <input type="text" id="design-custom" placeholder="e.g. soft female news anchor voice">
     <div class="btn-row">
       <button class="btn-cancel" onclick="hideDesignModal()">Cancel</button>
       <button class="btn-submit" onclick="applyDesign()">Use This Voice</button>
@@ -195,7 +236,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <audio id="audio-player" controls></audio>
   <div class="fp-meta">
     <span id="audio-meta"></span>
-    <a id="download-link" class="fp-download" download="speech.wav">Download</a>
+    <span>
+      <a id="download-link" class="fp-download" download="speech.wav">Download</a>
+      <a id="save-speaker-link" class="fp-download" style="display:none;cursor:pointer;margin-left:10px" onclick="saveAsSpeaker()">Save as Speaker</a>
+    </span>
   </div>
 </div>
 
@@ -223,6 +267,8 @@ let quotes = [];
 let categories = {};
 let selectedSpeaker = null;
 let activeInstruct = null;
+let lastGeneratedBlob = null;
+let lastWasDesign = false;
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
@@ -380,6 +426,8 @@ async function generate() {
     }
 
     const blob = await response.blob();
+    lastGeneratedBlob = blob;
+    lastWasDesign = !!activeInstruct;
     const url = URL.createObjectURL(blob);
     audioEl.src = url;
     document.getElementById('download-link').href = url;
@@ -390,6 +438,7 @@ async function generate() {
     }, { once: true });
 
     player.classList.add('visible');
+    document.getElementById('save-speaker-link').style.display = lastWasDesign ? 'inline' : 'none';
     audioEl.play().catch(() => {});
   } catch (e) {
     errorBox.innerHTML = `<div class="error">${esc(e.message)}</div>`;
@@ -440,14 +489,25 @@ async function uploadSpeaker() {
 // ── Voice Design modal ──────────────────────────────────────────────────────
 function showDesignModal() {
   document.getElementById('design-modal').classList.add('visible');
-  document.getElementById('design-instruct').value = activeInstruct || '';
 }
 function hideDesignModal() {
   document.getElementById('design-modal').classList.remove('visible');
 }
+function _buildInstruct() {
+  const custom = document.getElementById('design-custom').value.trim();
+  if (custom) return custom;
+  const parts = [
+    document.getElementById('design-gender').value,
+    document.getElementById('design-age').value,
+    document.getElementById('design-pitch').value,
+    document.getElementById('design-accent').value,
+    document.getElementById('design-style').value,
+  ].filter(Boolean);
+  return parts.join(', ') || null;
+}
 function applyDesign() {
-  const val = document.getElementById('design-instruct').value.trim();
-  if (!val) return alert('Please describe the voice');
+  const val = _buildInstruct();
+  if (!val) return alert('Please select at least one attribute or type a custom instruction');
   activeInstruct = val;
   selectedSpeaker = null;
   renderSpeakers();
@@ -458,6 +518,30 @@ function applyDesign() {
 function hidePlayer() {
   document.getElementById('floating-player').classList.remove('visible');
   document.getElementById('audio-player').pause();
+}
+
+async function saveAsSpeaker() {
+  const name = prompt('Save as speaker name:');
+  if (!name || !name.trim()) return;
+  const text = document.getElementById('text-input').value.trim();
+  const formData = new FormData();
+  formData.append('voice_name', name.trim());
+  formData.append('ref_text', text || 'Voice design sample');
+  formData.append('audio_file', lastGeneratedBlob, 'voice.wav');
+  try {
+    const res = await fetch('/voices', { method: 'POST', body: formData });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error?.message || err.detail || 'Upload failed');
+    }
+    await loadSpeakers();
+    selectSpeaker(name.trim());
+    activeInstruct = null;
+    renderSpeakers();
+    alert('Speaker saved: ' + name.trim());
+  } catch (e) {
+    alert('Save failed: ' + e.message);
+  }
 }
 
 // ── Utils ───────────────────────────────────────────────────────────────────
