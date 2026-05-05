@@ -363,11 +363,25 @@ class InferenceService:
     async def _process_batch(
         self, batch: list[tuple[SynthesisRequest, asyncio.Future]]
     ) -> None:
-        """Process a batch of requests together."""
+        """Process a batch of requests, grouping by voice to avoid cross-voice mixing."""
+        # Group by ref_audio_path (voice) to preserve per-request voice identity
+        voice_groups: dict[str, list[tuple[SynthesisRequest, asyncio.Future]]] = {}
+        for item in batch:
+            req = item[0]
+            key = req.ref_audio_path or ""
+            voice_groups.setdefault(key, []).append(item)
+
+        # Process each voice group as its own batch
+        for group in voice_groups.values():
+            await self._process_voice_group(group)
+
+    async def _process_voice_group(
+        self, batch: list[tuple[SynthesisRequest, asyncio.Future]]
+    ) -> None:
+        """Process a batch of requests that share the same voice."""
         texts = [req.text for req, _ in batch]
         first_req = batch[0][0]
 
-        # Build a single batched request using the first request's params
         batch_req = SynthesisRequest(
             text=texts,  # type: ignore  # list[str] is valid for model.generate()
             mode=first_req.mode,
@@ -387,10 +401,6 @@ class InferenceService:
         try:
             result = await self._synthesize_direct(batch_req)
 
-            # Split results — _synthesize_direct with list[str] returns
-            # a result with all audio tensors concatenated. We need to
-            # split per request. For simplicity, if the model returned
-            # N outputs matching N inputs, distribute them.
             if len(batch) == len(result.tensors):
                 for i, (req, future) in enumerate(batch):
                     tensor = result.tensors[i]
@@ -401,15 +411,13 @@ class InferenceService:
                         latency_s=result.latency_s,
                     ))
             else:
-                # Fallback: give all tensors to first, errors to rest
                 logger.warning(
                     "Batch result count mismatch: %d requests, %d outputs",
                     len(batch), len(result.tensors),
                 )
-                for _, future in batch:
-                    # Re-process individually
+                for req, future in batch:
                     try:
-                        r = await self._synthesize_direct(batch[0][0])
+                        r = await self._synthesize_direct(req)
                         future.set_result(r)
                     except Exception as e:
                         future.set_exception(e)

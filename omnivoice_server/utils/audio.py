@@ -31,7 +31,10 @@ def normalize_loudness(
     np_audio = audio.numpy().T  # (channels, T) → (T, channels)
 
     meter = pyln.Meter(sample_rate)
-    current_lufs = meter.integrated_loudness(np_audio)
+    try:
+        current_lufs = meter.integrated_loudness(np_audio)
+    except ValueError:
+        return tensor  # Audio too short for LUFS measurement
 
     if not np.isfinite(current_lufs):
         return tensor  # Silence or too short to measure

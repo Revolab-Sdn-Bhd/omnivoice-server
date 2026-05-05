@@ -1,6 +1,9 @@
 """
-GET  /voices             — list WAV files from voices/ dir
-POST /voices             — upload a new voice WAV
+GET  /voices             — list WAV files from voices/ dir (with metadata)
+POST /voices             — upload a new voice WAV (with optional metadata)
+
+Voice metadata is stored in companion `{voice_id}.meta.json` files alongside the WAV.
+Metadata fields: gender, language, description, tags.
 
 Profile management endpoints kept for OmniVoice clone support:
   /v1/voices/profiles/*
@@ -8,6 +11,7 @@ Profile management endpoints kept for OmniVoice clone support:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -35,17 +39,33 @@ def _get_profiles(request: Request):
     return request.app.state.profile_svc
 
 
+def _load_voice_meta(voices_dir: Path, voice_id: str) -> dict:
+    """Load companion metadata for a voice, or return empty dict."""
+    meta_path = voices_dir / f"{voice_id}.meta.json"
+    if meta_path.exists():
+        try:
+            return json.loads(meta_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            logger.warning("Failed to parse metadata for voice '%s'", voice_id)
+    return {}
+
+
 def _scan_voices(voices_dir: Path) -> list[dict]:
-    """Scan voices_dir for .wav files and return voice entries."""
+    """Scan voices_dir for .wav files and return voice entries with metadata."""
     voices_dir.mkdir(parents=True, exist_ok=True)
     voices = []
     for wav in sorted(voices_dir.glob("*.wav")):
         stem = wav.stem
         name = stem.replace("_", " ").replace("-", " ").title()
+        meta = _load_voice_meta(voices_dir, stem)
         voices.append({
             "id": stem,
-            "name": name,
+            "name": meta.get("name", name),
             "path": str(wav),
+            "gender": meta.get("gender"),
+            "language": meta.get("language"),
+            "description": meta.get("description"),
+            "tags": meta.get("tags", []),
         })
     return voices
 
@@ -68,9 +88,16 @@ async def upload_voice(
     voice_name: str = Form(..., description="Name for the voice (alphanumeric, dash, underscore)"),
     ref_text: str = Form(..., min_length=1, description="Transcript of the reference audio"),
     audio_file: UploadFile = File(..., description="Voice reference WAV audio"),
+    gender: str = Form(default="", description="Voice gender: male, female, neutral"),
+    language: str = Form(
+        default="",
+        description="Comma-separated language codes (e.g., ms, en, zh)",
+    ),
+    description: str = Form(default="", description="Description of the voice"),
+    tags: str = Form(default="", description="Comma-separated tags"),
     cfg=Depends(_get_cfg),
 ):
-    """Upload a new WAV file and register it as a voice."""
+    """Upload a new WAV file and register it as a voice with optional metadata."""
     # Sanitize name
     sanitized = re.sub(r"[^a-zA-Z0-9_\-]", "", voice_name)
     if not sanitized:
@@ -104,10 +131,28 @@ async def upload_voice(
     txt_path = voices_dir / f"{sanitized}.txt"
     txt_path.write_text(ref_text.strip())
 
+    # Save companion metadata
+    display_name = sanitized.replace("_", " ").replace("-", " ").title()
+    meta = {"name": display_name}
+    if gender:
+        meta["gender"] = gender
+    if language:
+        meta["language"] = [lang.strip() for lang in language.split(",") if lang.strip()]
+    if description:
+        meta["description"] = description
+    if tags:
+        meta["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
+    meta_path = voices_dir / f"{sanitized}.meta.json"
+    meta_path.write_text(json.dumps(meta, indent=2))
+
     return {
         "id": sanitized,
-        "name": sanitized.replace("_", " ").replace("-", " ").title(),
+        "name": display_name,
         "path": str(dest.resolve()),
+        "gender": meta.get("gender"),
+        "language": meta.get("language"),
+        "description": meta.get("description"),
+        "tags": meta.get("tags", []),
     }
 
 
