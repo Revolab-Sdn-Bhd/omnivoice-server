@@ -169,6 +169,7 @@ class ServerPool:
                             "language": lang,
                             "voice_ref_path": voice_id,
                             "trim_front_seconds": self.trim_seconds,
+                            "num_step": random.randint(16, 32),
                         },
                         timeout=60.0,
                     )
@@ -625,7 +626,10 @@ async def generate_audio(
 # ── Pipeline orchestrator ─────────────────────────────────────────────────────
 
 
-async def run_pipeline(config: dict, max_concurrent: int, max_dialogues: int = 0) -> None:
+async def run_pipeline(
+    config: dict, max_concurrent: int,
+    max_dialogues: int = 0, continuous: bool = False,
+) -> None:
     output_dir = Path(config["output_dir"])
     pipeline_cfg = config["pipeline"]
     tts_cfg = config["tts"]
@@ -728,113 +732,134 @@ async def run_pipeline(config: dict, max_concurrent: int, max_dialogues: int = 0
     # Two-stage pipeline: situations → dialogues (LLM) → audio (TTS)
     n_llm_workers = min(max_concurrent, 4)
     n_tts_workers = max_concurrent
-    situation_queue: asyncio.Queue[dict | None] = asyncio.Queue(maxsize=n_llm_workers * 2)
-    dialogue_queue: asyncio.Queue[tuple[dict, dict, str] | None] = asyncio.Queue(
+    SitItem = tuple[dict, str] | None
+    DlgItem = tuple[dict, dict, str, str] | None
+    situation_queue: asyncio.Queue[SitItem] = asyncio.Queue(maxsize=n_llm_workers * 2)
+    dialogue_queue: asyncio.Queue[DlgItem] = asyncio.Queue(
         maxsize=n_tts_workers * 2,
     )
     results: list[dict | Exception | None] = []
     total_situations = 0
-    run_suffix = f"_{random.randint(1000, 9999)}"
-    logger.info("Run suffix: %s (ensures unique dialogue IDs)", run_suffix)
     logger.info("Workers: %d LLM, %d TTS", n_llm_workers, n_tts_workers)
 
-    # ── Stage 0: Produce situations ────────────────────────────────────────
+    # ── Stage 0: Produce situations (loops forever in continuous mode) ────
 
-    async def producer() -> None:
+    async def produce_batch(run_suffix: str) -> int:
+        """Generate situations for all themes. Returns count of new situations."""
         nonlocal total_situations
+        batch_count = 0
 
         sit_dir = output_dir / "stage2_situations"
         sit_dir.mkdir(parents=True, exist_ok=True)
 
         # Load existing situations from disk (resumable)
-        existing_themes: set[str] = set()
         for sf in sorted(sit_dir.glob("*.json")):
-            theme_name = sf.stem
-            existing_themes.add(theme_name)
+            if sf.name.startswith("_"):
+                continue
             with open(sf) as f:
                 try:
                     for sit in json.load(f):
                         sit = validate_situation(sit)
                         total_situations += 1
-                        await situation_queue.put(sit)
+                        batch_count += 1
+                        await situation_queue.put((sit, run_suffix))
                         if max_dialogues > 0 and total_situations >= max_dialogues:
-                            break
+                            return batch_count
                 except Exception as e:
                     logger.warning("Failed to load %s: %s", sf.name, e)
-        if existing_themes:
-            logger.info("Loaded %d situations from %d existing themes", total_situations, len(existing_themes))
-        if max_dialogues > 0 and total_situations >= max_dialogues:
-            logger.info("Max dialogues reached from existing situations")
+
+        if batch_count > 0:
+            logger.info("Loaded %d existing situations", batch_count)
+
+        # Generate new situations per theme
+        for theme in themes:
+            if max_dialogues > 0 and total_situations >= max_dialogues:
+                break
+            theme_name = theme["theme"]
+            theme_file = sit_dir / f"{theme_name}.json"
+            if theme_file.exists():
+                continue
+
+            n = pipeline_cfg.get("situations_per_theme", 20)
+            seed = random.randint(10000, 99999)
+            prompt = SITUATION_PROMPT.format(
+                n=n,
+                seed=seed,
+                theme_abbr=theme_name[:2],
+                theme_json=json.dumps(theme, indent=2, ensure_ascii=False),
+                voices_json=voices_json,
+            )
+            try:
+                raw = await llm_primary.generate(prompt)
+                situations = parse_json_response(raw)
+                logger.info("Generated %d situations for '%s'", len(situations), theme_name)
+            except Exception as e:
+                logger.error("Situation generation failed for '%s': %s", theme_name, e)
+                fail_file = sit_dir / f"_failed_{theme_name}.json"
+                fail_entry = {
+                    "theme": theme_name,
+                    "error": str(e),
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "prompt_snippet": prompt[:500],
+                }
+                failures = []
+                if fail_file.exists():
+                    try:
+                        with open(fail_file) as ff:
+                            failures = json.load(ff)
+                    except Exception:
+                        pass
+                failures.append(fail_entry)
+                with open(fail_file, "w") as ff:
+                    json.dump(failures, ff, indent=2, ensure_ascii=False)
+                continue
+
+            if situations:
+                situations = [validate_situation(s) for s in situations]
+                with open(theme_file, "w") as f:
+                    json.dump(situations, f, indent=2, ensure_ascii=False)
+                for sit in situations:
+                    total_situations += 1
+                    batch_count += 1
+                    await situation_queue.put((sit, run_suffix))
+                    if max_dialogues > 0 and total_situations >= max_dialogues:
+                        break
+
+        return batch_count
+
+    async def producer() -> None:
+        if continuous:
+            batch_num = 0
+            while True:
+                batch_num += 1
+                run_suffix = f"_{random.randint(1000, 9999)}"
+                logger.info("=== Continuous batch %d (suffix %s) ===", batch_num, run_suffix)
+
+                # Clean stage2+3 so fresh situations are generated
+                for p in (output_dir / "stage2_situations", output_dir / "stage3_dialogues"):
+                    if p.exists():
+                        for f in p.glob("*.json"):
+                            if not f.name.startswith("_"):
+                                f.unlink()
+
+                count = await produce_batch(run_suffix)
+                logger.info("Batch %d: enqueued %d situations", batch_num, count)
         else:
-            # Generate new situations per theme, save + enqueue immediately
-            for theme in themes:
-                if max_dialogues > 0 and total_situations >= max_dialogues:
-                    break
-                theme_name = theme["theme"]
-                theme_file = sit_dir / f"{theme_name}.json"
-                if theme_file.exists():
-                    continue  # already loaded above
-
-                n = pipeline_cfg.get("situations_per_theme", 20)
-                seed = random.randint(10000, 99999)
-                prompt = SITUATION_PROMPT.format(
-                    n=n,
-                    seed=seed,
-                    theme_abbr=theme_name[:2],
-                    theme_json=json.dumps(theme, indent=2, ensure_ascii=False),
-                    voices_json=voices_json,
-                )
-                try:
-                    raw = await llm_primary.generate(prompt)
-                    situations = parse_json_response(raw)
-                    logger.info("Generated %d situations for '%s'", len(situations), theme_name)
-                except Exception as e:
-                    logger.error("Situation generation failed for '%s': %s", theme_name, e)
-                    # Save failure info for retry/debug
-                    fail_file = sit_dir / f"_failed_{theme_name}.json"
-                    fail_entry = {
-                        "theme": theme_name,
-                        "error": str(e),
-                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                        "prompt_snippet": prompt[:500],
-                    }
-                    # Append to existing failures file
-                    failures = []
-                    if fail_file.exists():
-                        try:
-                            with open(fail_file) as ff:
-                                failures = json.load(ff)
-                        except Exception:
-                            pass
-                    failures.append(fail_entry)
-                    with open(fail_file, "w") as ff:
-                        json.dump(failures, ff, indent=2, ensure_ascii=False)
-                    continue
-
-                if situations:
-                    situations = [validate_situation(s) for s in situations]
-                    # Save to disk immediately
-                    with open(theme_file, "w") as f:
-                        json.dump(situations, f, indent=2, ensure_ascii=False)
-                    # Enqueue immediately
-                    for sit in situations:
-                        total_situations += 1
-                        await situation_queue.put(sit)
-                        if max_dialogues > 0 and total_situations >= max_dialogues:
-                            break
-
-        logger.info("Enqueued %d situations total", total_situations)
-
-        for _ in range(n_llm_workers):
-            await situation_queue.put(None)
+            run_suffix = f"_{random.randint(1000, 9999)}"
+            logger.info("Run suffix: %s (ensures unique dialogue IDs)", run_suffix)
+            count = await produce_batch(run_suffix)
+            logger.info("Enqueued %d situations total", count)
+            for _ in range(n_llm_workers):
+                await situation_queue.put(None)
 
     # ── Stage 1: LLM dialogue generation ───────────────────────────────────
 
     async def llm_worker(worker_id: int) -> None:
         while True:
-            sit = await situation_queue.get()
-            if sit is None:
+            item = await situation_queue.get()
+            if item is None:
                 break
+            sit, run_suffix = item
             try:
                 result = await generate_dialogue(
                     sit, pipeline_cfg, router, output_dir, run_suffix,
@@ -843,13 +868,12 @@ async def run_pipeline(config: dict, max_concurrent: int, max_dialogues: int = 0
                     results.append(None)
                 else:
                     dialogue, llm_backend = result
-                    await dialogue_queue.put((dialogue, sit, llm_backend))
+                    await dialogue_queue.put((dialogue, sit, llm_backend, run_suffix))
             except Exception as e:
                 logger.error(
                     "LLM worker %d failed on %s: %s",
                     worker_id, sit.get("situation_id"), e,
                 )
-                # Save failure for retry
                 fail_dir = output_dir / "stage3_dialogues"
                 fail_dir.mkdir(parents=True, exist_ok=True)
                 fail_file = fail_dir / "_failed_dialogues.jsonl"
@@ -863,9 +887,9 @@ async def run_pipeline(config: dict, max_concurrent: int, max_dialogues: int = 0
                     ff.write("\n")
                 results.append(e)
 
-        # Signal TTS workers this LLM worker is done
-        for _ in range(n_tts_workers // n_llm_workers + 1):
-            await dialogue_queue.put(None)
+        if not continuous:
+            for _ in range(n_tts_workers // n_llm_workers + 1):
+                await dialogue_queue.put(None)
 
     # ── Stage 2: TTS audio generation ──────────────────────────────────────
 
@@ -877,13 +901,11 @@ async def run_pipeline(config: dict, max_concurrent: int, max_dialogues: int = 0
             item = await dialogue_queue.get()
             if item is None:
                 tts_done += 1
-                # Only stop when all LLM workers have finished
                 if tts_done >= n_llm_workers:
-                    # Drain remaining None sentinels for other TTS workers
                     for _ in range(n_tts_workers - 1):
                         await dialogue_queue.put(None)
                 break
-            dialogue, sit, llm_backend = item
+            dialogue, sit, llm_backend, run_suffix = item
             try:
                 result = await generate_audio(
                     dialogue, sit, pipeline_cfg, pool,
@@ -904,9 +926,13 @@ async def run_pipeline(config: dict, max_concurrent: int, max_dialogues: int = 0
     llm_tasks = [asyncio.create_task(llm_worker(i)) for i in range(n_llm_workers)]
     tts_tasks = [asyncio.create_task(tts_worker(i)) for i in range(n_tts_workers)]
 
-    await prod_task
-    await asyncio.gather(*llm_tasks)
-    await asyncio.gather(*tts_tasks)
+    if continuous:
+        # In continuous mode, we never naturally finish — run until cancelled
+        await asyncio.gather(prod_task, *llm_tasks, *tts_tasks)
+    else:
+        await prod_task
+        await asyncio.gather(*llm_tasks)
+        await asyncio.gather(*tts_tasks)
 
     await pool.aclose()
     await router.aclose()
@@ -933,10 +959,17 @@ def main() -> None:
         "--max-dialogues", type=int, default=0,
         help="Max dialogues to generate (0 = unlimited)",
     )
+    parser.add_argument(
+        "--continuous", action="store_true",
+        help="Run continuously — never stop generating batches",
+    )
     args = parser.parse_args()
 
     config = load_config()
-    asyncio.run(run_pipeline(config, args.max_concurrent, max_dialogues=args.max_dialogues))
+    asyncio.run(run_pipeline(
+        config, args.max_concurrent,
+        max_dialogues=args.max_dialogues, continuous=args.continuous,
+    ))
 
 
 if __name__ == "__main__":

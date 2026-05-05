@@ -12,7 +12,7 @@ VENV_PYTHON="$PROJECT_DIR/.venv/bin/python"
 LOG="/tmp/pipeline-loop.log"
 VALIDATE_INTERVAL=120
 HF_UPLOAD_INTERVAL=1800
-PIPELINE_TIMEOUT=2700
+PIPELINE_TIMEOUT=1200
 OUTPUT_DIR="$PROJECT_DIR/output/synthetic-dialogue"
 
 get_hours() {
@@ -66,17 +66,11 @@ while true; do
     echo "$(date '+%Y-%m-%d %H:%M:%S') Running pipeline..." | tee -a "$LOG"
     cd "$PROJECT_DIR"
 
-    timeout "$PIPELINE_TIMEOUT" $VENV_PYTHON "$SCRIPT_DIR/run_pipeline_async.py" --max-concurrent 8 2>&1 | tee -a "$LOG" || \
+    timeout "$PIPELINE_TIMEOUT" $VENV_PYTHON "$SCRIPT_DIR/run_pipeline_async.py" --max-concurrent 16 --continuous 2>&1 | tee -a "$LOG" || \
         echo "$(date '+%Y-%m-%d %H:%M:%S') Pipeline timed out or failed (exit $?), continuing..." | tee -a "$LOG"
 
     new_hours=$(get_hours)
     echo "$(date '+%Y-%m-%d %H:%M:%S') Pipeline done. ${current}h -> ${new_hours}h" | tee -a "$LOG"
-
-    # Clean stage2+3 so next iteration generates fresh situations + dialogues
-    # Stage4 audio is preserved (unique dialogue IDs per run)
-    echo "$(date '+%Y-%m-%d %H:%M:%S') Cleaning stage2+3 for next iteration..." | tee -a "$LOG"
-    rm -f "$OUTPUT_DIR"/stage2_situations/*.json
-    rm -f "$OUTPUT_DIR"/stage3_dialogues/*.json
 done
 
 # Final ASR validation pass before exiting

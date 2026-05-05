@@ -127,6 +127,7 @@ class TTSRequest(BaseModel):
     frequency_penalty: float = Field(default=0.3, ge=0.0)
     min_p: float = Field(default=0.05, ge=0.0, le=1.0)
     max_tokens: int = Field(default=1000, ge=1)
+    num_step: int | None = Field(default=None, ge=8, le=32)
     target_lufs: float = Field(default=-23.0, ge=-60.0, le=0.0)
     trim_front_seconds: float = Field(default=0.5, ge=0.0, le=5.0)
     instruct: str | None = Field(
@@ -202,6 +203,7 @@ def _build_synthesis_req(body: TTSRequest, cfg) -> SynthesisRequest:
         ref_audio_path=audio_path,
         ref_text=ref_text,
         speed=1.0,
+        num_step=body.num_step,
         language=body.language if body.language != "en" else None,
         class_temperature=body.temperature if body.temperature != 0.3 else None,
     )

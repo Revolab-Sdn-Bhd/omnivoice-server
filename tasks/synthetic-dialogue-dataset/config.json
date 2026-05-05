@@ -26,6 +26,14 @@
       {
         "url": "http://localhost:8881",
         "max_concurrent": 12
+      },
+      {
+        "url": "http://localhost:8882",
+        "max_concurrent": 12
+      },
+      {
+        "url": "http://localhost:8883",
+        "max_concurrent": 12
       }
     ],
     "default_temperature": 0.3,
