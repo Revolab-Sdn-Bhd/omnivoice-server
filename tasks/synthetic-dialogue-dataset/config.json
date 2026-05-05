@@ -1,0 +1,104 @@
+{
+  "output_dir": "output/synthetic-dialogue",
+  "llm": {
+    "api_base": "https://api.z.ai/api/anthropic",
+    "model": "glm-4.5-air",
+    "max_tokens": 4096
+  },
+  "llm_backends": [
+    {
+      "name": "zai",
+      "type": "anthropic",
+      "api_base": "https://api.z.ai/api/anthropic",
+      "model": "glm-4.5-air",
+      "max_tokens": 4096
+    },
+    {
+      "name": "qwen3",
+      "type": "openai",
+      "api_base": "http://localhost:8900/v1",
+      "model": "Scicom-intl/Qwen3-30B-A3B-Instruct-2507-Malaysian",
+      "max_tokens": 3000
+    }
+  ],
+  "tts": {
+    "servers": [
+      {
+        "url": "http://localhost:8881",
+        "max_concurrent": 12
+      }
+    ],
+    "default_temperature": 0.3,
+    "target_lufs": -23.0,
+    "trim_front_seconds": 0.0,
+    "max_concurrent": 8,
+    "voice_pools": {
+      "male": [
+        "anwar",
+        "Farid_595",
+        "hendrick-6",
+        "wafiy_5"
+      ],
+      "female": [
+        "Dania_0",
+        "Pearl_Happy"
+      ]
+    },
+    "default_genders": {
+      "agent": "male",
+      "human": "female"
+    }
+  },
+  "asr": {
+    "model": "large-v3",
+    "language": "ms",
+    "device": "cuda",
+    "compute_type": "float16",
+    "align_model": "mesolitica/wav2vec2-xls-r-300m-mixed",
+    "wer_threshold": 0.5,
+    "cer_threshold": 0.4,
+    "alignment_threshold": 0.85
+  },
+  "pipeline": {
+    "themes": [
+      "customer_support",
+      "food_dining",
+      "transport",
+      "retail",
+      "government_services",
+      "workplace",
+      "real_estate",
+      "business",
+      "finance",
+      "family",
+      "neighbourhood",
+      "religious",
+      "sports_leisure",
+      "medical",
+      "mental_health",
+      "wellness",
+      "education",
+      "skills_training",
+      "podcast",
+      "radio_show",
+      "content_creation",
+      "emergency",
+      "legal",
+      "debate_discussion",
+      "hotel_hospitality",
+      "insurance",
+      "auto_mechanic",
+      "immigration",
+      "property_agent",
+      "tuition_center",
+      "wedding_planning",
+      "fitness_gym"
+    ],
+    "situations_per_theme": 10,
+    "dialogues_per_situation": 1,
+    "min_turns": 6,
+    "max_turns": 12,
+    "gap_between_turns_s": 0.3,
+    "mp3_bitrate": "192k"
+  }
+}
