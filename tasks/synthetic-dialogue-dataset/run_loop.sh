@@ -11,6 +11,8 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VENV_PYTHON="$PROJECT_DIR/.venv/bin/python"
 LOG="/tmp/pipeline-loop.log"
 VALIDATE_INTERVAL=120
+HF_UPLOAD_INTERVAL=1800
+PIPELINE_TIMEOUT=2700
 OUTPUT_DIR="$PROJECT_DIR/output/synthetic-dialogue"
 
 get_hours() {
@@ -41,6 +43,16 @@ done &
 ASR_PID=$!
 echo "$(date '+%Y-%m-%d %H:%M:%S') ASR validator PID: $ASR_PID" | tee -a "$LOG"
 
+# Start HF incremental upload as a long-running background loop
+HF_LOG="/tmp/pipeline-hf-upload.log"
+echo "$(date '+%Y-%m-%d %H:%M:%S') Starting HF incremental uploader in background..." | tee -a "$LOG"
+while true; do
+    $VENV_PYTHON "$SCRIPT_DIR/upload_to_hf.py" --incremental 2>&1 | tee -a "$HF_LOG" || true
+    sleep "$HF_UPLOAD_INTERVAL"
+done &
+HF_PID=$!
+echo "$(date '+%Y-%m-%d %H:%M:%S') HF uploader PID: $HF_PID (every ${HF_UPLOAD_INTERVAL}s)" | tee -a "$LOG"
+
 while true; do
     current=$(get_hours)
     count=$(get_dialogue_count)
@@ -54,7 +66,8 @@ while true; do
     echo "$(date '+%Y-%m-%d %H:%M:%S') Running pipeline..." | tee -a "$LOG"
     cd "$PROJECT_DIR"
 
-    $VENV_PYTHON "$SCRIPT_DIR/run_pipeline_async.py" --max-concurrent 8 2>&1 | tee -a "$LOG" || true
+    timeout "$PIPELINE_TIMEOUT" $VENV_PYTHON "$SCRIPT_DIR/run_pipeline_async.py" --max-concurrent 8 2>&1 | tee -a "$LOG" || \
+        echo "$(date '+%Y-%m-%d %H:%M:%S') Pipeline timed out or failed (exit $?), continuing..." | tee -a "$LOG"
 
     new_hours=$(get_hours)
     echo "$(date '+%Y-%m-%d %H:%M:%S') Pipeline done. ${current}h -> ${new_hours}h" | tee -a "$LOG"
@@ -67,11 +80,16 @@ while true; do
 done
 
 # Final ASR validation pass before exiting
-echo "$(date '+%Y-%m-%d %H:%M:%S') Stopping ASR validator..." | tee -a "$LOG"
+echo "$(date '+%Y-%m-%d %H:%M:%S') Stopping background processes..." | tee -a "$LOG"
 kill "$ASR_PID" 2>/dev/null || true
+kill "$HF_PID" 2>/dev/null || true
 wait "$ASR_PID" 2>/dev/null || true
+wait "$HF_PID" 2>/dev/null || true
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') Running final ASR validation..." | tee -a "$LOG"
 CUDA_VISIBLE_DEVICES=1 $VENV_PYTHON "$SCRIPT_DIR/05_validate_asr.py" 2>&1 | tee -a "$LOG" || true
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') Final HF upload..." | tee -a "$LOG"
+$VENV_PYTHON "$SCRIPT_DIR/upload_to_hf.py" --incremental 2>&1 | tee -a "$LOG" || true
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') All done. Final: $(get_hours)h ($(get_dialogue_count) dialogues)" | tee -a "$LOG"
