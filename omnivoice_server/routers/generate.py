@@ -18,7 +18,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..services.inference import InferenceService, QueueFullError, SynthesisRequest
 from ..services.metrics import MetricsService
@@ -113,6 +113,8 @@ async def get_quotes():
 
 class TTSRequest(BaseModel):
     """SepBox-compatible TTS request body."""
+
+    model_config = ConfigDict(extra="forbid")
 
     text: str = Field(..., min_length=1, max_length=10_000)
     language: str = Field(default="en", pattern=r"^(en|ms|mixed)$")
