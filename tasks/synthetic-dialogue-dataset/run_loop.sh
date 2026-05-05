@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run pipeline in a loop until target hours reached.
-# Each iteration: generates new situations + dialogues + TTS, keeps existing audio.
+# Pipeline and ASR validation run as independent background processes.
+# Pipeline never waits for ASR — both GPUs stay busy.
 # Usage: ./run_loop.sh [target_hours]
 set -euo pipefail
 
@@ -30,6 +31,16 @@ get_dialogue_count() {
 current=$(get_hours)
 echo "$(date '+%Y-%m-%d %H:%M:%S') Starting loop. Current: ${current}h / Target: ${TARGET_HOURS}h" | tee -a "$LOG"
 
+# Start ASR validation as a long-running background loop
+ASR_LOG="/tmp/pipeline-asr.log"
+echo "$(date '+%Y-%m-%d %H:%M:%S') Starting ASR validator in background..." | tee -a "$LOG"
+while true; do
+    CUDA_VISIBLE_DEVICES=1 $VENV_PYTHON "$SCRIPT_DIR/05_validate_asr.py" 2>&1 | tee -a "$ASR_LOG" || true
+    sleep "$VALIDATE_INTERVAL"
+done &
+ASR_PID=$!
+echo "$(date '+%Y-%m-%d %H:%M:%S') ASR validator PID: $ASR_PID" | tee -a "$LOG"
+
 while true; do
     current=$(get_hours)
     count=$(get_dialogue_count)
@@ -40,30 +51,13 @@ while true; do
         break
     fi
 
-    echo "$(date '+%Y-%m-%d %H:%M:%S') Running pipeline (with concurrent validation)..." | tee -a "$LOG"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') Running pipeline..." | tee -a "$LOG"
     cd "$PROJECT_DIR"
 
-    $VENV_PYTHON "$SCRIPT_DIR/run_pipeline_async.py" --max-concurrent 8 2>&1 | tee -a "$LOG" &
-    PIPELINE_PID=$!
-
-    # Validate periodically while pipeline generates
-    while kill -0 "$PIPELINE_PID" 2>/dev/null; do
-        sleep "$VALIDATE_INTERVAL"
-        if ! kill -0 "$PIPELINE_PID" 2>/dev/null; then
-            break
-        fi
-        echo "$(date '+%Y-%m-%d %H:%M:%S') Running ASR validation (concurrent)..." | tee -a "$LOG"
-        CUDA_VISIBLE_DEVICES=1 $VENV_PYTHON "$SCRIPT_DIR/05_validate_asr.py" 2>&1 | tee -a "$LOG" || true
-    done
-
-    wait "$PIPELINE_PID" || true
-
-    # Final validation pass for any remaining dialogues
-    echo "$(date '+%Y-%m-%d %H:%M:%S') Running final ASR validation..." | tee -a "$LOG"
-    CUDA_VISIBLE_DEVICES=1 $VENV_PYTHON "$SCRIPT_DIR/05_validate_asr.py" 2>&1 | tee -a "$LOG" || true
+    $VENV_PYTHON "$SCRIPT_DIR/run_pipeline_async.py" --max-concurrent 8 2>&1 | tee -a "$LOG" || true
 
     new_hours=$(get_hours)
-    echo "$(date '+%Y-%m-%d %H:%M:%S') Run complete. ${current}h -> ${new_hours}h" | tee -a "$LOG"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') Pipeline done. ${current}h -> ${new_hours}h" | tee -a "$LOG"
 
     # Clean stage2+3 so next iteration generates fresh situations + dialogues
     # Stage4 audio is preserved (unique dialogue IDs per run)
@@ -71,5 +65,13 @@ while true; do
     rm -f "$OUTPUT_DIR"/stage2_situations/*.json
     rm -f "$OUTPUT_DIR"/stage3_dialogues/*.json
 done
+
+# Final ASR validation pass before exiting
+echo "$(date '+%Y-%m-%d %H:%M:%S') Stopping ASR validator..." | tee -a "$LOG"
+kill "$ASR_PID" 2>/dev/null || true
+wait "$ASR_PID" 2>/dev/null || true
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') Running final ASR validation..." | tee -a "$LOG"
+CUDA_VISIBLE_DEVICES=1 $VENV_PYTHON "$SCRIPT_DIR/05_validate_asr.py" 2>&1 | tee -a "$LOG" || true
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') All done. Final: $(get_hours)h ($(get_dialogue_count) dialogues)" | tee -a "$LOG"
