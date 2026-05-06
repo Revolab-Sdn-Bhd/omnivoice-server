@@ -53,3 +53,6 @@ traces/
 *_accent.wav
 *_accent.txt
 designed_voice/
+
+# Local PM2 process config (machine-specific GPU assignment etc.)
+ecosystem.config.js
