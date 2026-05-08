@@ -183,7 +183,7 @@ def validate_dialogue_turns(
 
         wer_threshold = asr_config.get("wer_threshold", 0.15)
         cer_threshold = asr_config.get("cer_threshold", 0.10)
-        turn_pass = wer <= wer_threshold and cer <= cer_threshold
+        turn_pass = wer <= wer_threshold and cer <= cer_threshold and len(words) > 0
 
         turn_results[turn_key] = {
             "written": written_ref,
@@ -241,12 +241,20 @@ def build_final_dataset(config: dict, failed_ids: set[str], validation_dir: Path
     data_stereo_dir = final_dir / "data_stereo"
     final_dir.mkdir(parents=True, exist_ok=True)
     data_stereo_dir.mkdir(parents=True, exist_ok=True)
+    # Clean old outputs before rebuild
+    for old_file in data_stereo_dir.glob("*"):
+        old_file.unlink()
+    (final_dir / "dataset.jsonl").unlink(missing_ok=True)
 
     dataset_entries = []
     stats = {
         "total_dialogues": 0,
         "total_turns": 0,
         "total_duration_s": 0.0,
+        "validated_dialogues": 0,
+        "validated_duration_s": 0.0,
+        "unvalidated_dialogues": 0,
+        "unvalidated_duration_s": 0.0,
         "themes": {},
         "llm_backends": {},
     }
@@ -303,18 +311,24 @@ def build_final_dataset(config: dict, failed_ids: set[str], validation_dir: Path
         gap_s = config["pipeline"].get("gap_between_turns_s", 0.3)
         for mt in manifest["turns"]:
             turn_key = f"turn_{mt['turn']:02d}_{mt['speaker']}"
-            # Offset word timestamps by turn start position
             turn_word_list = word_data.get(turn_key, [])
+
+            # Use first word's start time to skip TTS leading silence
+            leading_silence = 0.0
+            if turn_word_list:
+                leading_silence = turn_word_list[0].get("start", 0.0)
+
             offset_words = [
                 {
                     "word": w["word"],
-                    "start": round(w["start"] + offset, 3),
-                    "end": round(w["end"] + offset, 3),
+                    "start": round(w["start"] - leading_silence + offset, 3),
+                    "end": round(w["end"] - leading_silence + offset, 3),
                     "score": w["score"],
                 }
                 for w in turn_word_list
             ]
 
+            speech_duration = mt["duration_s"] - leading_silence
             turn_entry = {
                 "turn": mt["turn"],
                 "speaker": mt["speaker"],
@@ -322,11 +336,11 @@ def build_final_dataset(config: dict, failed_ids: set[str], validation_dir: Path
                 "text_written": mt["text_written"],
                 "text_spoken": mt.get("text_spoken", ""),
                 "start_s": round(offset, 3),
-                "end_s": round(offset + mt["duration_s"], 3),
+                "end_s": round(offset + speech_duration, 3),
                 "words": offset_words,
             }
             companion["turns"].append(turn_entry)
-            offset += mt["duration_s"] + gap_s
+            offset += speech_duration + gap_s
 
         companion_path = data_stereo_dir / f"{dialogue_id}.json"
         with open(companion_path, "w") as f:
@@ -342,6 +356,12 @@ def build_final_dataset(config: dict, failed_ids: set[str], validation_dir: Path
         stats["total_dialogues"] += 1
         stats["total_turns"] += len(manifest["turns"])
         stats["total_duration_s"] += manifest["total_duration_s"]
+        if word_data:
+            stats["validated_dialogues"] += 1
+            stats["validated_duration_s"] += manifest["total_duration_s"]
+        else:
+            stats["unvalidated_dialogues"] += 1
+            stats["unvalidated_duration_s"] += manifest["total_duration_s"]
         theme = situation_meta.get("theme", "unknown")
         stats["themes"][theme] = stats["themes"].get(theme, 0) + 1
         backend = manifest.get("llm_backend", "unknown")
@@ -356,6 +376,8 @@ def build_final_dataset(config: dict, failed_ids: set[str], validation_dir: Path
             f.write(json.dumps(entry) + "\n")
 
     stats["total_duration_h"] = round(stats["total_duration_s"] / 3600, 2)
+    stats["validated_duration_h"] = round(stats["validated_duration_s"] / 3600, 2)
+    stats["unvalidated_duration_h"] = round(stats["unvalidated_duration_s"] / 3600, 2)
     stats_path = final_dir / "stats.json"
     with open(stats_path, "w") as f:
         json.dump(stats, f, indent=2)
@@ -368,6 +390,10 @@ def main() -> None:
     parser.add_argument(
         "--skip-asr", action="store_true",
         help="Skip WhisperX, just assemble final dataset",
+    )
+    parser.add_argument(
+        "--rebuild-final", action="store_true",
+        help="Only rebuild final dataset from existing validations (no ASR, no stubs)",
     )
     parser.add_argument(
         "--scrub-only", action="store_true",
@@ -393,6 +419,22 @@ def main() -> None:
     if not audio_dir.exists():
         logger.error("Stage 4 output not found. Run 04_generate_audio.py first.")
         sys.exit(1)
+
+    # Fast path: just rebuild final from existing validations
+    if args.rebuild_final:
+        failed_path = validation_dir / "failed_ids.json"
+        failed_ids: set[str] = set()
+        if failed_path.exists():
+            with open(failed_path) as f:
+                failed_ids = set(json.load(f))
+        stats = build_final_dataset(config, failed_ids, validation_dir)
+        logger.info(
+            "Rebuilt final: %d dialogues, %.1fh (validated: %d/%.1fh, unvalidated: %d/%.1fh)",
+            stats["total_dialogues"], stats["total_duration_h"],
+            stats["validated_dialogues"], stats["validated_duration_h"],
+            stats["unvalidated_dialogues"], stats["unvalidated_duration_h"],
+        )
+        return
 
     failed_ids: set[str] = set()
 
