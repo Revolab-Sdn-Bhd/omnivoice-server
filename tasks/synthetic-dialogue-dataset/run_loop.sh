@@ -12,7 +12,7 @@ VENV_PYTHON="$PROJECT_DIR/.venv/bin/python"
 LOG="/tmp/pipeline-loop.log"
 VALIDATE_INTERVAL=120
 HF_UPLOAD_INTERVAL=1800
-PIPELINE_TIMEOUT=1200
+PIPELINE_TIMEOUT=7200
 OUTPUT_DIR="$PROJECT_DIR/output/synthetic-dialogue"
 
 get_hours() {
@@ -37,7 +37,8 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') Starting loop. Current: ${current}h / Target:
 ASR_LOG="/tmp/pipeline-asr.log"
 echo "$(date '+%Y-%m-%d %H:%M:%S') Starting ASR validator in background..." | tee -a "$LOG"
 while true; do
-    CUDA_VISIBLE_DEVICES=1 $VENV_PYTHON "$SCRIPT_DIR/05_validate_asr.py" 2>&1 | tee -a "$ASR_LOG" || true
+    export CUDA_VISIBLE_DEVICES=0
+    $VENV_PYTHON "$SCRIPT_DIR/05_validate_asr.py" 2>&1 | tee -a "$ASR_LOG" || true
     sleep "$VALIDATE_INTERVAL"
 done &
 ASR_PID=$!
@@ -53,6 +54,17 @@ done &
 HF_PID=$!
 echo "$(date '+%Y-%m-%d %H:%M:%S') HF uploader PID: $HF_PID (every ${HF_UPLOAD_INTERVAL}s)" | tee -a "$LOG"
 
+# Start periodic final rebuild as a long-running background loop
+REBUILD_INTERVAL=1800
+REBUILD_LOG="/tmp/pipeline-rebuild.log"
+echo "$(date '+%Y-%m-%d %H:%M:%S') Starting final rebuild checkpoint (every ${REBUILD_INTERVAL}s)..." | tee -a "$LOG"
+while true; do
+    $VENV_PYTHON "$SCRIPT_DIR/05_validate_asr.py" --rebuild-final 2>&1 | tee -a "$REBUILD_LOG" || true
+    sleep "$REBUILD_INTERVAL"
+done &
+REBUILD_PID=$!
+echo "$(date '+%Y-%m-%d %H:%M:%S') Rebuild checkpoint PID: $REBUILD_PID (every ${REBUILD_INTERVAL}s)" | tee -a "$LOG"
+
 while true; do
     current=$(get_hours)
     count=$(get_dialogue_count)
@@ -66,8 +78,8 @@ while true; do
     echo "$(date '+%Y-%m-%d %H:%M:%S') Running pipeline..." | tee -a "$LOG"
     cd "$PROJECT_DIR"
 
-    timeout "$PIPELINE_TIMEOUT" $VENV_PYTHON "$SCRIPT_DIR/run_pipeline_async.py" --max-concurrent 16 --continuous 2>&1 | tee -a "$LOG" || \
-        echo "$(date '+%Y-%m-%d %H:%M:%S') Pipeline timed out or failed (exit $?), continuing..." | tee -a "$LOG"
+    timeout "$PIPELINE_TIMEOUT" $VENV_PYTHON "$SCRIPT_DIR/run_pipeline_async.py" --max-concurrent 16 --continuous >> "$LOG" 2>&1 || \
+        echo "$(date '+%Y-%m-%d %H:%M:%S') Pipeline timed out or failed (exit $?), continuing..." >> "$LOG"
 
     new_hours=$(get_hours)
     echo "$(date '+%Y-%m-%d %H:%M:%S') Pipeline done. ${current}h -> ${new_hours}h" | tee -a "$LOG"
@@ -81,7 +93,8 @@ wait "$ASR_PID" 2>/dev/null || true
 wait "$HF_PID" 2>/dev/null || true
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') Running final ASR validation..." | tee -a "$LOG"
-CUDA_VISIBLE_DEVICES=1 $VENV_PYTHON "$SCRIPT_DIR/05_validate_asr.py" 2>&1 | tee -a "$LOG" || true
+export CUDA_VISIBLE_DEVICES=0
+$VENV_PYTHON "$SCRIPT_DIR/05_validate_asr.py" 2>&1 | tee -a "$LOG" || true
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') Final HF upload..." | tee -a "$LOG"
 $VENV_PYTHON "$SCRIPT_DIR/upload_to_hf.py" --incremental 2>&1 | tee -a "$LOG" || true
