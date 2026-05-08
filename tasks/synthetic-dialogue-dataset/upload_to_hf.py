@@ -2,13 +2,15 @@
 """
 Upload M-CHAT final dataset to HuggingFace (Revolab/omnidialog).
 
-Uses `hf upload` CLI for simplicity. The HF repo is PRIVATE.
+Uses huggingface_hub Python API for batch uploads.
+data_stereo/ is sharded into subdirectories by theme prefix (first 2 chars)
+to stay under HF's 10,000 files-per-directory limit.
 
 Usage:
-    # Full upload
+    # Full upload (creates repo, uploads everything)
     python upload_to_hf.py
 
-    # Incremental upload (re-uploads index files, only new data_stereo files)
+    # Incremental upload (only uploads files not yet in the repo)
     python upload_to_hf.py --incremental
 
     # Dry run
@@ -16,13 +18,14 @@ Usage:
 """
 
 import argparse
+import json
 import logging
-import subprocess
-import sys
+import os
+import shutil
 import tempfile
 from pathlib import Path
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s", force=True)
 logger = logging.getLogger(__name__)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -63,11 +66,12 @@ generated via LLM → TTS pipeline with ASR validation.
 ## Structure
 
 ```
-omnidialog.jsonl          — {path, duration, llm_backend, theme} per dialogue
+omnidialog.jsonl              — {path, duration, llm_backend, theme} per dialogue
 data_stereo/
-  {id}.mp3                — stereo audio
-  {id}.json               — transcript + word timestamps + situation metadata
-stats.json                — aggregate statistics
+  {shard}/                    — sharded by theme prefix (2-char) to stay under 10K files/dir
+    {id}.mp3                  — stereo audio
+    {id}.json                 — transcript + word timestamps + situation metadata
+stats.json                    — aggregate statistics
 ```
 
 ## Generation Pipeline
@@ -87,12 +91,12 @@ Theme → Situation → Dialogue (LLM) → TTS (OmnIvoice) → ASR Validation (W
 
 | Field | Type | Description |
 |-------|------|-------------|
-| path | string | Relative path to MP3 in data_stereo/ |
+| path | string | Relative path to MP3 in data_stereo/{shard}/ |
 | duration | float | Duration in seconds |
 | llm_backend | string | LLM used (zai/qwen3) |
 | theme | string | Dialogue theme category |
 
-### data_stereo/{id}.json
+### data_stereo/{shard}/{id}.json
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -127,63 +131,120 @@ CC BY-NC 4.0 — for research and non-commercial use.
 """
 
 
-def hf_upload(repo_id: str, local_path: str, path_in_repo: str, dry_run: bool = False) -> None:
-    cmd = [
-        "hf", "upload", repo_id, local_path,
-        path_in_repo, "--repo-type", "dataset",
-    ]
-    if dry_run:
-        logger.info("DRY RUN: %s", " ".join(cmd))
-        return
-    subprocess.run(cmd, check=True)
+def get_shard_key(filename: str) -> str:
+    return filename[:2]
+
+
+def build_staging_dir(final_dir: Path, skip_existing: set[str] | None = None) -> Path:
+    """Create a temp dir with sharded data_stereo structure using symlinks."""
+    staging = Path(tempfile.mkdtemp(prefix="omnidialog_upload_"))
+
+    # Sharded JSONL
+    src = final_dir / "dataset.jsonl"
+    if src.exists():
+        lines = src.read_text().strip().split("\n")
+        sharded = []
+        for line in lines:
+            rec = json.loads(line)
+            old_path = rec.get("path", "")
+            if old_path.startswith("data_stereo/"):
+                fname = old_path[len("data_stereo/"):]
+                shard = get_shard_key(fname)
+                rec["path"] = f"data_stereo/{shard}/{fname}"
+            sharded.append(json.dumps(rec, ensure_ascii=False))
+        (staging / "omnidialog.jsonl").write_text("\n".join(sharded) + "\n")
+        logger.info("Built sharded JSONL (%d entries)", len(sharded))
+
+    # README
+    (staging / "README.md").write_text(DATASET_CARD)
+
+    # Stats
+    stats_src = final_dir / "stats.json"
+    if stats_src.exists():
+        shutil.copy2(stats_src, staging / "stats.json")
+
+    # data_stereo sharded via symlinks
+    data_dir = final_dir / "data_stereo"
+    if data_dir.exists():
+        all_files = sorted(f for f in os.listdir(data_dir) if not f.startswith("."))
+        n_linked = 0
+        for fname in all_files:
+            shard = get_shard_key(fname)
+            repo_path = f"data_stereo/{shard}/{fname}"
+            if skip_existing and repo_path in skip_existing:
+                continue
+            shard_dir = staging / "data_stereo" / shard
+            shard_dir.mkdir(parents=True, exist_ok=True)
+            src_path = data_dir / fname
+            os.symlink(src_path, shard_dir / fname)
+            n_linked += 1
+        logger.info("Linked %d / %d data files into staging dir", n_linked, len(all_files))
+
+    return staging
 
 
 def upload(args: argparse.Namespace) -> None:
     final_dir = FINAL_DIR
     if not final_dir.exists():
         logger.error("Final directory not found: %s", final_dir)
-        sys.exit(1)
+        raise SystemExit(1)
 
     repo_id = args.repo
 
-    # Write README to temp file and upload
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
-        f.write(DATASET_CARD)
-        readme_path = f.name
+    from huggingface_hub import HfApi
+    api = HfApi()
 
     if args.dry_run:
         data_dir = final_dir / "data_stereo"
-        n_data = len(list(data_dir.iterdir())) if data_dir.exists() else 0
+        n_data = len([f for f in os.listdir(data_dir) if not f.startswith(".")]) if data_dir.exists() else 0
         logger.info("Would upload to %s (private):", repo_id)
         logger.info("  README.md")
-        logger.info("  omnidialog.jsonl")
+        logger.info("  omnidialog.jsonl (sharded paths, %d entries)", n_data // 2)
         logger.info("  stats.json")
-        logger.info("  data_stereo/ (%d files)", n_data)
-        Path(readme_path).unlink()
+        logger.info("  data_stereo/ (%d files, sharded by prefix)", n_data)
         return
 
-    # README
-    logger.info("Uploading README.md...")
-    hf_upload(repo_id, readme_path, "README.md")
-    Path(readme_path).unlink()
+    api.create_repo(repo_id, repo_type="dataset", private=True, exist_ok=True)
 
-    # Index files (always re-upload — they change every cycle)
-    logger.info("Uploading omnidialog.jsonl...")
-    hf_upload(repo_id, str(final_dir / "dataset.jsonl"), "omnidialog.jsonl")
+    skip = None
+    if args.incremental:
+        existing = set(api.list_repo_files(repo_id, repo_type="dataset"))
+        logger.info("Repo has %d existing files", len(existing))
+        skip = existing
 
-    logger.info("Uploading stats.json...")
-    hf_upload(repo_id, str(final_dir / "stats.json"), "stats.json")
+    staging = build_staging_dir(final_dir, skip_existing=skip)
 
-    # data_stereo folder (CLI skips unchanged files automatically)
-    data_dir = final_dir / "data_stereo"
-    if data_dir.exists():
-        n_files = len(list(data_dir.iterdir()))
-        logger.info("Uploading data_stereo/ (%d files)...", n_files)
-        cmd = [
-            "hf", "upload", repo_id, str(data_dir),
-            "data_stereo", "--repo-type", "dataset",
-        ]
-        subprocess.run(cmd, check=True)
+    try:
+        # Upload index files separately first (small, fast)
+        for f in ["README.md", "omnidialog.jsonl", "stats.json"]:
+            src = staging / f
+            if src.exists():
+                logger.info("Uploading %s...", f)
+                api.upload_file(
+                    path_or_fileobj=str(src),
+                    path_in_repo=f,
+                    repo_id=repo_id,
+                    repo_type="dataset",
+                )
+
+        # Upload sharded data_stereo
+        ds_staging = staging / "data_stereo"
+        if ds_staging.exists():
+            shard_dirs = sorted(d for d in ds_staging.iterdir() if d.is_dir())
+            for shard_dir in shard_dirs:
+                n = len(list(shard_dir.iterdir()))
+                if n == 0:
+                    continue
+                logger.info("Uploading data_stereo/%s/ (%d files)...", shard_dir.name, n)
+                api.upload_folder(
+                    folder_path=str(shard_dir),
+                    path_in_repo=f"data_stereo/{shard_dir.name}",
+                    repo_id=repo_id,
+                    repo_type="dataset",
+                )
+            logger.info("Uploaded %d shards.", len(shard_dirs))
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
     logger.info("Upload complete: https://huggingface.co/datasets/%s", repo_id)
 
