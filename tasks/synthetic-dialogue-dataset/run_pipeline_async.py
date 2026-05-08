@@ -29,7 +29,7 @@ import httpx
 import numpy as np
 from anthropic import Anthropic
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s", force=True)
 logger = logging.getLogger(__name__)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -83,6 +83,18 @@ def write_wav_stereo(path: Path, stereo: np.ndarray) -> None:
     with open(path, 'wb') as f:
         f.write(header + fmt_chunk + data_chunk)
         f.write(raw)
+
+
+def trim_leading_silence(audio: np.ndarray, threshold: float = 0.01, min_silence: int = 512) -> np.ndarray:
+    """Trim leading silence from TTS audio. Keeps at least min_silence samples."""
+    if len(audio) <= min_silence:
+        return audio
+    abs_audio = np.abs(audio)
+    above = np.where(abs_audio > threshold)[0]
+    if len(above) == 0:
+        return audio[-min_silence:]
+    start = max(0, above[0] - 160)  # keep 10ms of context before first sound
+    return audio[start:]
 
 
 def apply_fade(audio: np.ndarray, fade_ms: int = 20) -> np.ndarray:
@@ -292,10 +304,31 @@ class LLMRouter:
 
 
 def parse_json_response(text: str) -> dict | list:
+    from json_repair import repair_json
     if text.startswith("```"):
         text = text.split("\n", 1)[1]
         text = text.rsplit("```", 1)[0]
-    parsed = json.loads(text.strip())
+    text = text.strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            repaired = repair_json(text)
+            parsed = json.loads(repaired) if isinstance(repaired, str) else repaired
+            logger.debug("JSON repaired successfully")
+        except Exception:
+            match = re.search(r'\[[\s\S]*\]', text)
+            if not match:
+                match = re.search(r'\{[\s\S]*\}', text)
+            if match:
+                try:
+                    repaired = repair_json(match.group(0))
+                    parsed = json.loads(repaired) if isinstance(repaired, str) else repaired
+                    logger.debug("JSON extracted + repaired via regex")
+                except Exception as e:
+                    raise ValueError(f"JSON repair failed: {e}") from e
+            else:
+                raise
     if isinstance(parsed, list):
         if len(parsed) == 1 and isinstance(parsed[0], dict):
             return parsed[0]
@@ -334,10 +367,28 @@ Available voices:
 Output a JSON array of situations, each with:
 - situation_id: "{theme_abbr}_{{domain}}_NNN" format
 - theme, domain, scenario, context
-- characters: {{ "agent": {{"name": "...", "gender": "male" or "female", "role": "...", "speaking_style": "..."}},
-    "human": {{"name": "...", "gender": "male" or "female", "role": "...", "speaking_style": "..."}} }}
-  - role: character's job/position (e.g., "customer_service", "doctor", "teacher", "lawyer")
-  - speaking_style: how they speak (e.g., "formal and professional", "casual and friendly", "urgent and direct")
+- context_details: {{ "location": "...", "environment": "...",
+  "circumstances": "...", "time_of_day": "..." }}
+  - location: where it takes place (e.g., "Maybank branch PJ",
+    "clinic lobby", "food court")
+  - environment: channel/medium (e.g., "phone call", "video call", "chat app", "voice assistant")
+    IMPORTANT: All conversations are remote (phone/video/chat). Never use "face-to-face". No physical actions (sitting, pointing, handing items).
+  - circumstances: what led to this conversation (e.g., "customer noticed unauthorized transaction",
+    "patient has recurring headache for 2 weeks")
+  - time_of_day: e.g., "morning rush hour", "afternoon", "late night"
+- characters: {{ "agent": {{...}}, "human": {{...}} }} — each character has:
+  - name, gender, role, speaking_style (as before)
+  - personality_traits: 2-3 traits (e.g., "patient and methodical", "anxious and verbose",
+    "cheerful and efficient")
+  - background: one sentence about who they are (e.g., "Senior customer service rep with 5 years
+    experience", "First-time home buyer in their late 20s")
+  - emotional_state: their initial mood (e.g., "calm and professional", "frustrated", "excited",
+    "nervous")
+  - goals: what they want to achieve (e.g., "resolve the complaint quickly",
+    "understand the medical procedure", "get the best deal possible")
+  - communication_quirks: unique speech habit (e.g., "uses 'kan' a lot", "very formal even in
+    casual situations", "frequently code-switches mid-sentence", "uses Malaysian slang like 'kot',
+    'lah', 'meh'")
 - expected_emotion_arc: list of emotions
 - difficulty: "easy" | "medium" | "hard"
 - key_details: dict of specific values
@@ -359,17 +410,57 @@ Rules:
 2. Turn 1 MUST be from the agent — agent always opens the conversation (greeting, introduction)
 3. Each turn: 1-3 sentences max (TTS-friendly)
 4. Natural BM/EN code-mixing (lah, kan, meh, tu, ke, kot)
-5. Follow each character's speaking_style from the situation — agent and human may have different registers.
-6. Write numbers, amounts, dates, IDs, abbreviations as you normally would.
+5. Follow each character's speaking_style AND personality_traits from the situation.
+   Embody their personality — a "patient" agent speaks differently from a "brusque" one.
+6. Use each character's communication_quirks naturally (e.g., if they use "kan" a lot,
+   include it in their dialogue; if they code-switch frequently, reflect that).
+7. The conversation should reflect the context_details (location, environment,
+   circumstances, time_of_day). A late-night call feels different from a morning
+   call. All conversations are remote — no physical actions or face-to-face settings.
+8. Each character pursues their stated goals — this creates natural tension and
+   resolution in the dialogue.
+9. Write numbers, amounts, dates, IDs, abbreviations as you normally would.
    Text normalization for TTS is handled separately — just write naturally.
-7. Include emotion and tone per turn
-8. Follow the expected emotional arc
-9. Text must be natural spoken Malay — NOT formal written Malay
-10. The LAST turn MUST be from the agent — agent closes the conversation
+10. Include emotion and tone per turn
+11. Follow the expected emotional arc
+12. Text must be natural spoken Malay — NOT formal written Malay
+13. The LAST turn MUST be from the agent — agent closes the conversation
     (polite closing, summary, farewell, or next-steps). Human never gets the final word.
+14. Never include physical actions (sit down, come here, take this, point at). All
+    conversations are phone calls, video calls, or chat — no face-to-face interaction.
+
+ANTI-REPETITION RULES (CRITICAL — violations make data unusable):
+15. NEVER repeat the same phrase or sentence pattern across multiple turns.
+    BAD: agent says "Saya faham" in turn 3, 5, 7, 9, 11
+    BAD: agent says "Jangan risau" in 3+ turns
+    GOOD: Vary acknowledgments — "Baiklah", "Noted", "Okay, saya catat",
+          "Setuju", "Betul tu", "Oo, macam tu", "Alamak", "Wah"
+16. Each turn must ADVANCE the conversation — do not re-state what was already said.
+    If the human already explained the problem, the agent should ask a NEW follow-up
+    or propose a solution, not acknowledge again.
+17. The closing turns (last 2-3) must NOT be identical or near-identical.
+    BAD: last 3 agent turns all say "Saya akan hubungi anda" / "Jangan risau" / "Terima kasih"
+    GOOD: each closing turn covers a different aspect — confirm details, give next steps, say farewell
+18. The agent must NOT be a passive echo. The agent should actively:
+    - Ask probing questions
+    - Propose solutions or alternatives
+    - Give specific information (dates, amounts, reference numbers)
+    - Make decisions or confirm actions
+    React to what the human says, don't just acknowledge it.
+19. FORBIDDEN CRUTCH PHRASES — do NOT use these more than ONCE in the entire dialogue:
+    "Saya faham", "Jangan risau", "Tidak apa", "Baiklah, saya faham"
+    Use DIFFERENT acknowledgments each time: "Noted", "Oo, macam tu", "Setuju",
+    "Betul tu", "Wah", "Alamak", "Okay, saya catat", "Boleh", "Macam tu ke"
+20. CHARACTER NAME AWARENESS — Do NOT confuse character names with voice names.
+    The agent's name is "{agent_name}", NOT the voice model name. The human's
+    name is "{human_name}", NOT the voice model name. Never refer to yourself
+    by the voice model name or use the other character's name for yourself.
+    If the situation describes "Siti Nora" as the agent, use "Siti Nora" in dialogue,
+    not a different name.
 
 CRITICAL CHARACTER RULE — The agent is "{agent_name}" ({agent_gender}), the human is "{human_name}" ({human_gender}).
-- You MUST use these EXACT names. Do NOT invent, substitute, or change them.
+- You MUST use these EXACT names in the dialogue text. Do NOT invent, substitute, or change them.
+- NEVER use generic labels like "Agent", "User", "Caller", "Customer", "Puan User", "Encik Agent".
 - Malaysian honorifics: Male = "Encik [name]", Female = "Puan [name]" or "Cik [name]"
 - Agent {agent_name} ({agent_gender}) uses honorific: {agent_honorific}
 - Human {human_name} ({human_gender}) uses honorific: {human_honorific}
@@ -397,6 +488,64 @@ Output JSON:
 
 Output ONLY valid JSON.
 """
+
+
+
+QUALITY_PROMPT = """\
+Score this Malay spoken dialogue on 4 dimensions (1-5 each).
+
+Situation context: {context_summary}
+
+Dialogue:
+{dialogue_text}
+
+Rate each dimension:
+1. coherence: Do turns logically follow each other? No contradictions or non-sequiturs?
+2. naturalness: Does this sound like real spoken conversation? No robotic/forced phrasing?
+3. persona_consistency: Do characters stay true to their personality, speaking style, and emotional state?
+4. topic_coverage: Does the dialogue fully explore the situation with concrete details?
+
+Output ONLY JSON:
+{{"coherence": N, "naturalness": N, "persona_consistency": N, "topic_coverage": N, "overall": N, "reason": "one sentence"}}
+"""
+
+
+async def score_dialogue(
+    dialogue: dict,
+    situation: dict,
+    router: LLMRouter,
+) -> dict | None:
+    """LLM-as-judge quality scoring. Returns scores dict or None on failure."""
+    chars = situation.get("characters", {})
+    agent_char = chars.get("agent", {})
+    human_char = chars.get("human", {})
+    ctx = situation.get("context_details", {})
+
+    context_summary = (
+        f"Theme: {situation.get('theme', 'unknown')}. "
+        f"Scenario: {situation.get('scenario', 'unknown')}. "
+        f"Agent: {agent_char.get('name', 'Agent')} ({agent_char.get('personality_traits', 'unknown')}), "
+        f"Human: {human_char.get('name', 'Human')} ({human_char.get('personality_traits', 'unknown')}). "
+        f"Context: {ctx.get('location', 'unknown')}, {ctx.get('environment', 'unknown')}, "
+        f"{ctx.get('circumstances', 'unknown')}"
+    )
+
+    turns = dialogue.get("turns", [])
+    dialogue_text = "\n".join(
+        f"{t.get('speaker', '?')}: {t.get('text', '')}" for t in turns
+    )
+
+    prompt = QUALITY_PROMPT.format(
+        context_summary=context_summary,
+        dialogue_text=dialogue_text,
+    )
+    try:
+        raw, backend_name = await router.generate(prompt)
+        scores = parse_json_response(raw)
+        return scores
+    except Exception as e:
+        logger.warning("Quality scoring failed: %s", e)
+        return None
 
 
 # ── Voice selection ────────────────────────────────────────────────────────────
@@ -461,9 +610,141 @@ async def generate_dialogue(
         logger.error("LLM failed %s: %s", sid, e)
         return None
 
-    # Post-validate character names
+    # Reject malformed dialogues
+    if not dialogue.get("turns"):
+        logger.error("Dialogue %s rejected: no turns", sid)
+        return None
+    if not situation.get("scenario"):
+        logger.error("Dialogue %s rejected: empty scenario", sid)
+        return None
+
+    # Fix voice IDs used as character names (replace with agent/human name)
+    voice_id_names = {"Pearl Happy", "Pearl Sad", "Pearl Angry1", "Pearl Angry2",
+                      "Pearl Surprise", "Pearl_Happy", "Pearl_Sad", "Pearl_Angry1",
+                      "Pearl_Angry2", "Pearl_Surprise", "hendrick-6", "wafiy_5",
+                      "Farid_595", "Dania_0", "NorinaYahya", "SitiNora", "Aisyah", "Sofea"}
+    for role in ["agent", "human"]:
+        cname = chars.get(role, {}).get("name", "")
+        if cname in voice_id_names:
+            chars[role]["name"] = agent_name if role == "agent" else human_name
+            logger.warning("Dialogue %s: replaced voice ID '%s' in %s with '%s'",
+                           sid, cname, role, chars[role]["name"])
+            situation["characters"] = chars
+
+    # Fix generic placeholder names (replace with agent/human name)
+    generic_names = {"Agent", "agent", "User", "user", "Caller", "caller",
+                     "Customer", "customer", "Encik Agent", "Puan Agent",
+                     "Encik User", "Puan User"}
+    for role in ["agent", "human"]:
+        cname = chars.get(role, {}).get("name", "")
+        if cname in generic_names or not cname.strip():
+            chars[role]["name"] = agent_name if role == "agent" else human_name
+            logger.warning("Dialogue %s: replaced generic %s name '%s' with '%s'",
+                           sid, role, cname, chars[role]["name"])
+            situation["characters"] = chars
+
+    # Fix same-name collision (both sides same name)
+    agent_char_name = chars.get("agent", {}).get("name", agent_name)
+    human_char_name = chars.get("human", {}).get("name", human_name)
+    if agent_char_name and human_char_name and agent_char_name == human_char_name:
+        chars["human"]["name"] = human_name
+        logger.warning("Dialogue %s: same-name collision '%s', replaced human with '%s'",
+                       sid, agent_char_name, human_name)
+        situation["characters"] = chars
+
+    # Reject missing theme (can't fix this)
+    if not situation.get("theme"):
+        logger.error("Dialogue %s rejected: missing theme", sid)
+        return None
+
+    # Post-validate character names & clean speaker prefixes from text
     turns = dialogue.get("turns", [])
+
+    # Reject off-topic dialogues (theme/content mismatch)
+    theme = situation.get("theme", "").lower()
+    scenario = situation.get("scenario", "").lower()
+    domain = situation.get("domain", "").lower()
+    all_turn_text = " ".join(t.get("text", "") for t in turns).lower()
+    _domain_keywords = {
+        "banking": ["maybank", "cimb", "bank islam", "rhb bank", "akaun bank", "transaksi", "pinjaman", "atm", "kad debit"],
+        "medical": ["doktor", "klinik", "hospital", "sakit", "ubat", "rawatan", "demam", "x-ray"],
+        "insurance": ["insuran", "polisi", "takaful", "klaim", "coverage", "premis"],
+        "education": ["sekolah", "universiti", "pelajar", "guru", "subjek", "peperiksaan", "kursus"],
+        "government": ["jabatan", "kementerian", "kerajaan", "permohonan", "surat beran", "mykad"],
+        "immigration": ["passport", "imigresen", "visa", "work permit", "permanent residence"],
+        "retail": ["kedai", "beli", "harga", "diskaun", "promo", "pulangkan"],
+        "food": ["makan", "restoran", "menu", "makanan", "minuman", "masak"],
+        "transport": ["bas", "train", "flight", "grab", "teksi", "tiket", "lapangan terbang"],
+        "real_estate": ["rumah", "sewa", "condo", "apartment", "deposit", "tanah"],
+    }
+    dialogue_domain_hits = {}
+    for d, keywords in _domain_keywords.items():
+        hits = sum(1 for kw in keywords if kw in all_turn_text)
+        if hits >= 2:
+            dialogue_domain_hits[d] = hits
+    if dialogue_domain_hits:
+        top_domain = max(dialogue_domain_hits, key=dialogue_domain_hits.get)
+        top_hits = dialogue_domain_hits[top_domain]
+        theme_domain = f"{theme} {domain} {scenario}"
+        domain_relevant = (top_domain in theme_domain or
+                          any(kw in theme_domain for kw in _domain_keywords.get(top_domain, [])))
+        if not domain_relevant and top_hits >= 3:
+            logger.error("Dialogue %s rejected: theme/content mismatch — theme=%s but dialogue is about %s (%d keyword hits)",
+                         sid, theme, top_domain, top_hits)
+            return None
+    voice_bad_names = {"Pearl Happy", "Pearl Sad", "Pearl Angry1", "Pearl Angry2",
+                       "Pearl Surprise", "Pearl_Happy", "Pearl_Sad", "Pearl_Angry1",
+                       "Pearl_Angry2", "Pearl_Surprise", "hendrick-6", "wafiy_5",
+                       "Farid_595", "Dania_0", "Aisyah", "Sofea"}
+    for t in turns:
+        # Fix qwen3 sometimes using "user" instead of "human"
+        if t.get("speaker") == "user":
+            t["speaker"] = "human"
+        txt = t.get("text", "")
+        # Strip LLM-generated speaker prefixes like "Puan Dania:", "Encik Farid:", etc.
+        if ":" in txt[:40]:
+            txt = txt.split(":", 1)[1].strip()
+        # Replace voice names with proper character names
+        for bad in voice_bad_names:
+            if bad in txt:
+                spk = t.get("speaker", "agent")
+                if spk == "agent":
+                    txt = txt.replace(bad, agent_name)
+                else:
+                    txt = txt.replace(bad, human_name)
+        t["text"] = txt
+        # Replace generic labels in turn text
+        generic_labels = ["Puan User", "Encik User", "Puan Agent", "Encik Agent",
+                         "Encik Caller", "Puan Caller", "Encik Customer", "Puan Customer"]
+        spk = t.get("speaker", "agent")
+        for gl in generic_labels:
+            if gl in txt:
+                txt = txt.replace(gl, agent_honorific if spk == "agent" else human_honorific)
+                logger.warning("Dialogue %s: replaced generic label '%s' in text", sid, gl)
     if turns:
+        # Fix same-speaker ending: strip trailing same-speaker turns
+        while len(turns) >= 2 and turns[-1]["speaker"] == turns[-2]["speaker"]:
+            removed = turns.pop()
+            logger.warning("Dialogue %s: removed trailing same-speaker turn (%s): %s",
+                           sid, removed["speaker"], removed.get("text", "")[:60])
+
+        # Ensure last turn is agent (close the conversation)
+        if turns and turns[-1].get("speaker") != "agent":
+            # Find last agent turn and move it to end, or just swap last turn
+            last_human_idx = len(turns) - 1
+            # Try to find last agent turn before the human turn
+            for i in range(len(turns) - 2, -1, -1):
+                if turns[i].get("speaker") == "agent":
+                    break
+            else:
+                # No agent turn found, change last to agent
+                turns[-1]["speaker"] = "agent"
+            logger.warning("Dialogue %s: fixed last turn to be agent", sid)
+
+        # Renumber turns after any removals
+        for i, t in enumerate(turns):
+            t["turn"] = i + 1
+
         all_text = " ".join(t.get("text", "") for t in turns).lower()
         issues = []
         if agent_name.lower() not in all_text:
@@ -472,14 +753,44 @@ async def generate_dialogue(
             issues.append(f"human name '{human_name}' not found in dialogue text")
         if turns[0].get("speaker") != "agent":
             issues.append("turn 1 is not agent (must open)")
-        if turns[-1].get("speaker") != "agent":
-            issues.append("last turn is not agent (must close)")
         if issues:
             logger.warning("Dialogue %s validation issues: %s", sid, "; ".join(issues))
+
+    # Reject repetitive dialogues (LLM infinite loop + phrase repetition)
+    if len(turns) >= 8:
+        agent_texts = [t.get("text", "") for t in turns if t.get("speaker") == "agent"]
+        human_texts = [t.get("text", "") for t in turns if t.get("speaker") == "human"]
+        dup_count = 0
+        for texts in [agent_texts, human_texts]:
+            for i in range(1, len(texts)):
+                if texts[i] and texts[i][:80] == texts[i - 1][:80]:
+                    dup_count += 1
+        if dup_count >= 3:
+            logger.error("Dialogue %s rejected: %d repetitive turns", sid, dup_count)
+            return None
+
+    # Flag phrase-level repetition (e.g., "Saya faham" in 4+ agent turns)
+    _boring_phrases = ["saya faham", "jangan risau", "saya faham,", "jangan risau,", "baiklah,", "tak apa,"]
+    agent_texts_lower = [t.get("text", "").lower() for t in turns if t.get("speaker") == "agent"]
+    for phrase in _boring_phrases:
+        count = sum(1 for at in agent_texts_lower if phrase in at)
+        if count >= 2:
+            logger.warning("Dialogue %s: phrase '%s' repeated %d times in agent turns — rejecting",
+                           sid, phrase, count)
+            return None
 
     dialogue["dialogue_id"] = dialogue_id
     dialogue["situation_id"] = sid
     dialogue["llm_backend"] = llm_backend
+
+    # Quality scoring (lightweight LLM-as-judge)
+    scores = await score_dialogue(dialogue, situation, router)
+    if scores:
+        dialogue["quality_scores"] = scores
+        overall = scores.get("overall", 0)
+        if overall < 3:
+            logger.warning("Low quality dialogue %s: overall=%.1f — %s",
+                           sid, overall, scores.get("reason", ""))
 
     with open(existing_path, "w") as f:
         json.dump(dialogue, f, indent=2, ensure_ascii=False)
@@ -562,7 +873,7 @@ async def generate_audio(
             "tts_time_s": round(elapsed, 3),
             "voice_id": voice_id,
         }
-        return manifest_entry, (speaker, apply_fade(audio))
+        return manifest_entry, (speaker, apply_fade(trim_leading_silence(audio)))
 
     turn_results = await asyncio.gather(*[synthesize_turn(t) for t in turns])
 
@@ -599,11 +910,13 @@ async def generate_audio(
             "domain": situation.get("domain", ""),
             "scenario": situation.get("scenario", ""),
             "context": situation.get("context", ""),
+            "context_details": situation.get("context_details", {}),
             "characters": situation.get("characters", {}),
             "expected_emotion_arc": situation.get("expected_emotion_arc", []),
             "difficulty": situation.get("difficulty", ""),
             "key_details": situation.get("key_details", {}),
         },
+        "quality_scores": dialogue.get("quality_scores"),
         "turns": manifest_turns,
         "combined_wav": "combined.wav",
         "combined_mp3": "combined.mp3",
@@ -655,8 +968,15 @@ async def run_pipeline(
                                "Surya", "Balqis", "Izzah", "Mira", "Syafiqah", "Zuleyka"]
     _used_name_ids: set[str] = set()
 
-    def validate_situation(sit: dict) -> dict:
+    def validate_situation(sit):
         """Validate + fix situation: swap agent/human if roles are reversed, fix TTS names."""
+        if isinstance(sit, str):
+            try:
+                sit = json.loads(sit)
+            except (json.JSONDecodeError, ValueError):
+                return sit
+        if not isinstance(sit, dict):
+            return sit
         chars = sit.get("characters", {})
         agent = chars.get("agent", {})
         human = chars.get("human", {})
@@ -669,7 +989,8 @@ async def run_pipeline(
         agent_is_customer = any(kw in agent_role for kw in CUSTOMER_KEYWORDS)
 
         if human_is_service and (agent_is_customer or not agent_is_service):
-            chars["agent"], chars["human"] = chars["human"], chars["agent"]
+            if "agent" in chars and "human" in chars:
+                chars["agent"], chars["human"] = chars["human"], chars["agent"]
             logger.info("Swapped agent↔human in %s: agent=%s→%s, human=%s→%s",
                         sit.get("situation_id"), agent_role, human_role, human_role, agent_role)
 
@@ -716,6 +1037,13 @@ async def run_pipeline(
     voice_pools = tts_cfg.get("voice_pools", {})
     default_genders = tts_cfg.get("default_genders", {"agent": "male", "human": "female"})
 
+    # Enrich TTS_VOICE_NAMES with all voice names from config
+    for _pool_voices in voice_pools.values():
+        for _vn in _pool_voices:
+            TTS_VOICE_NAMES_UNDER.add(_vn)
+            TTS_VOICE_NAMES_UNDER.add(_vn.replace(" ", "_"))
+    TTS_VOICE_NAMES.update(TTS_VOICE_NAMES_UNDER | {n.replace("_", " ") for n in TTS_VOICE_NAMES_UNDER})
+
     # Fetch available voices from TTS server (context for situation generation)
     voices_json = "[]"
     try:
@@ -760,6 +1088,8 @@ async def run_pipeline(
                 try:
                     for sit in json.load(f):
                         sit = validate_situation(sit)
+                        if "created_at" not in sit:
+                            sit["created_at"] = "legacy"
                         total_situations += 1
                         batch_count += 1
                         await situation_queue.put((sit, run_suffix))
@@ -771,16 +1101,19 @@ async def run_pipeline(
         if batch_count > 0:
             logger.info("Loaded %d existing situations", batch_count)
 
-        # Generate new situations per theme
+        # Generate new situations per theme — dispatch in parallel, feed queue incrementally
+        themes_to_gen = []
         for theme in themes:
             if max_dialogues > 0 and total_situations >= max_dialogues:
                 break
             theme_name = theme["theme"]
             theme_file = sit_dir / f"{theme_name}.json"
-            if theme_file.exists():
-                continue
+            if not theme_file.exists():
+                themes_to_gen.append(theme)
 
-            n = pipeline_cfg.get("situations_per_theme", 20)
+        async def gen_one_theme(theme: dict) -> tuple[str, list[dict] | None, str | None, str]:
+            theme_name = theme["theme"]
+            n = min(pipeline_cfg.get("situations_per_theme", 20), 2)
             seed = random.randint(10000, 99999)
             prompt = SITUATION_PROMPT.format(
                 n=n,
@@ -790,42 +1123,52 @@ async def run_pipeline(
                 voices_json=voices_json,
             )
             try:
-                raw = await llm_primary.generate(prompt)
+                raw, backend_name = await router.generate(prompt)
                 situations = parse_json_response(raw)
-                logger.info("Generated %d situations for '%s'", len(situations), theme_name)
+                return theme_name, situations, None, backend_name
             except Exception as e:
                 logger.error("Situation generation failed for '%s': %s", theme_name, e)
-                fail_file = sit_dir / f"_failed_{theme_name}.json"
-                fail_entry = {
-                    "theme": theme_name,
-                    "error": str(e),
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "prompt_snippet": prompt[:500],
-                }
-                failures = []
-                if fail_file.exists():
-                    try:
-                        with open(fail_file) as ff:
-                            failures = json.load(ff)
-                    except Exception:
-                        pass
-                failures.append(fail_entry)
-                with open(fail_file, "w") as ff:
-                    json.dump(failures, ff, indent=2, ensure_ascii=False)
-                continue
+                return theme_name, None, str(e), "unknown"
 
-            if situations:
-                situations = [validate_situation(s) for s in situations]
-                with open(theme_file, "w") as f:
-                    json.dump(situations, f, indent=2, ensure_ascii=False)
-                for sit in situations:
-                    total_situations += 1
-                    batch_count += 1
-                    await situation_queue.put((sit, run_suffix))
-                    if max_dialogues > 0 and total_situations >= max_dialogues:
-                        break
+        if themes_to_gen:
+            # Fire all tasks, feed queue as each completes — LLM workers start immediately
+            pending = {asyncio.create_task(gen_one_theme(t)): t for t in themes_to_gen}
+            while pending:
+                done, pending_set = await asyncio.wait(pending.keys(), return_when=asyncio.FIRST_COMPLETED)
+                pending = {k: v for k, v in pending.items() if k not in done}
+                for task in done:
+                    theme_name, situations, error, sit_backend = task.result()
+                    if error is not None:
+                        fail_file = sit_dir / f"_failed_{theme_name}.json"
+                        fail_entry = {"theme": theme_name, "error": error,
+                                      "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}
+                        failures = []
+                        if fail_file.exists():
+                            try:
+                                with open(fail_file) as ff:
+                                    failures = json.load(ff)
+                            except Exception:
+                                pass
+                        failures.append(fail_entry)
+                        with open(fail_file, "w") as ff:
+                            json.dump(failures, ff, indent=2, ensure_ascii=False)
+                        continue
+                    if situations:
+                        logger.info("Generated %d situations for '%s' [%s]", len(situations), theme_name, sit_backend)
+                        situations = [validate_situation(s) for s in situations]
+                        for s in situations:
+                            s["llm_backend"] = sit_backend
+                            s["created_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                        theme_file = sit_dir / f"{theme_name}.json"
+                        with open(theme_file, "w") as f:
+                            json.dump(situations, f, indent=2, ensure_ascii=False)
+                        for sit in situations:
+                            total_situations += 1
+                            batch_count += 1
+                            await situation_queue.put((sit, run_suffix))
+                            if max_dialogues > 0 and total_situations >= max_dialogues:
+                                break
 
-        return batch_count
 
     async def producer() -> None:
         if continuous:
