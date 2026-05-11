@@ -170,7 +170,7 @@ class Settings(BaseSettings):
         description="Target loudness (LUFS) for generated audio normalization",
     )
     trim_front_seconds: float = Field(
-        default=0.5,
+        default=0.0,
         description="Seconds to trim from the front of generated audio",
     )
 

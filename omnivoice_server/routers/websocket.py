@@ -132,11 +132,15 @@ async def tts_websocket(ws: WebSocket):
                 ctx_id, voice_id, transcript,
             )
 
+            # Snapshot in-flight tasks so the new task waits for them first,
+            # preserving chunk ordering when messages arrive back-to-back.
+            preceding = list(active_tasks.get(ctx_id, []))
+
             # Launch synthesis in background task
             task = asyncio.create_task(
                 _process_transcript(
                     ws, msg, ctx_id, transcript, language, voice_id,
-                    cancelled_contexts, active_tasks, t0,
+                    cancelled_contexts, active_tasks, t0, preceding,
                 )
             )
             active_tasks.setdefault(ctx_id, []).append(task)
@@ -175,6 +179,7 @@ async def _process_transcript(
     cancelled_contexts: set[str],
     active_tasks: dict[str, list[asyncio.Task]],
     t0: float,
+    preceding: list[asyncio.Task],
 ) -> None:
     """Process a single transcript message: split sentences, synthesize, stream."""
     import numpy as np
@@ -188,10 +193,9 @@ async def _process_transcript(
         return
 
     sentences = split_sentences(transcript, max_chars=cfg.stream_chunk_max_chars)
-    pcm_buffer = bytearray()
-    chunk_idx = 0
-    ttfc_logged = False
 
+    # Synthesize all sentences first (runs concurrently with preceding tasks).
+    pcm_buffer = bytearray()
     for i, sentence in enumerate(sentences):
         if ctx_id in cancelled_contexts:
             return
@@ -223,24 +227,29 @@ async def _process_transcript(
         )
 
         for tensor in result.tensors:
-            if ctx_id in cancelled_contexts:
-                return
             flat = tensor.squeeze(0).cpu().float().numpy()
             pcm = (flat * 32767).clip(-32768, 32767).astype(np.int16)
             pcm_buffer.extend(pcm.tobytes())
-            prev_idx = chunk_idx
-            chunk_idx = await _send_buffered_chunks(
-                ws, pcm_buffer, ctx_id, cancelled_contexts, chunk_idx,
-            )
-            if not ttfc_logged and chunk_idx > prev_idx:
-                logger.info("[ws] ctx=%s ttfc=%.3fs", ctx_id, time.monotonic() - t0)
-                ttfc_logged = True
 
-    # Flush remaining buffer
-    await _send_buffered_chunks(
+    # Wait for preceding tasks only when about to send, preserving chunk order
+    # without blocking synthesis above.
+    for t in preceding:
+        try:
+            await t
+        except Exception:
+            pass
+
+    if ctx_id in cancelled_contexts:
+        return
+
+    chunk_idx = 0
+    chunk_idx = await _send_buffered_chunks(
         ws, pcm_buffer, ctx_id, cancelled_contexts, chunk_idx, flush=True,
     )
-    logger.info("[ws] ctx=%s total=%.3fs chunks=%d", ctx_id, time.monotonic() - t0, chunk_idx)
+    logger.info(
+        "[ws] ctx=%s ttfc=%.3fs total=%.3fs chunks=%d",
+        ctx_id, time.monotonic() - t0, time.monotonic() - t0, chunk_idx,
+    )
 
 
 def _cleanup_task(

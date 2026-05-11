@@ -70,6 +70,15 @@ def _scan_voices(voices_dir: Path) -> list[dict]:
     return voices
 
 
+# ── GET /api/speakers ──────────────────────────────────────────────────────────
+
+@router.get("/api/speakers")
+async def list_speakers(cfg=Depends(_get_cfg)):
+    """List speakers from voices_dir."""
+    voices = _scan_voices(cfg.voices_dir)
+    return {"speakers": [{"id": v["id"], "name": v["name"]} for v in voices]}
+
+
 # ── GET /voices ────────────────────────────────────────────────────────────────
 
 
