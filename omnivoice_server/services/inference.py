@@ -49,6 +49,8 @@ class SynthesisRequest:
     class_temperature: float | None = None
     duration: float | None = None  # Fixed output duration in seconds
     language: str | None = None  # Optional language code for multilingual pronunciation
+    t_schedule_mode: str | None = None  # "linear" or "sway"
+    sway_coeff: float | None = None  # sway coefficient, default -1.0
 
 
 @dataclass
@@ -113,6 +115,11 @@ class OmniVoiceAdapter:
         # Add optional language parameter if provided
         if req.language is not None:
             kwargs["language"] = req.language
+
+        if req.t_schedule_mode is not None:
+            kwargs["t_schedule_mode"] = req.t_schedule_mode
+        if req.sway_coeff is not None:
+            kwargs["sway_coeff"] = req.sway_coeff
 
         if req.mode == "design" and req.instruct:
             kwargs["instruct"] = req.instruct
@@ -266,6 +273,8 @@ class InferenceService:
             "t": req.text,
             "m": req.mode,
             "i": req.instruct,
+            "rap": req.ref_audio_path,
+            "ecp": req.embedding_cache_path,
             "s": req.speed,
             "ns": req.num_step,
             "gs": req.guidance_scale,
