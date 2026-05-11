@@ -272,11 +272,11 @@ class VLLMClient:
 
 
 class LLMRouter:
-    """Distributes generation across multiple LLM backends."""
+    """Round-robin distribution across LLM backends with fallback."""
 
     def __init__(self, backends: list[dict]) -> None:
         self._clients: list[LLMClient | VLLMClient] = []
-        self._counter = itertools.count()
+        self._rr_idx = 0
         for cfg in backends:
             client_type = cfg.get("type", "anthropic")
             if client_type == "openai":
@@ -291,24 +291,18 @@ class LLMRouter:
         return self._clients[0]
 
     async def generate(self, prompt: str) -> tuple[str, str]:
-        """Race all backends concurrently, return first success."""
-        winner: asyncio.Future[tuple[str, str]] = asyncio.get_running_loop().create_future()
-
-        async def _try(client: LLMClient | VLLMClient) -> None:
+        """Try backends round-robin, fallback on failure."""
+        start = self._rr_idx % len(self._clients)
+        self._rr_idx += 1
+        for offset in range(len(self._clients)):
+            idx = (start + offset) % len(self._clients)
+            client = self._clients[idx]
             try:
                 text = await client.generate(prompt)
-                if not winner.done():
-                    winner.set_result((text, client.name))
+                return text, client.name
             except Exception as e:
-                if not winner.done():
-                    logger.debug("[%s] lost race: %s", client.name, e)
-
-        tasks = [asyncio.create_task(_try(c)) for c in self._clients]
-        try:
-            return await winner
-        finally:
-            for t in tasks:
-                t.cancel()
+                logger.warning("[%s] failed, trying next: %s", client.name, e)
+        raise RuntimeError("All LLM backends failed")
 
     async def aclose(self) -> None:
         for c in self._clients:
