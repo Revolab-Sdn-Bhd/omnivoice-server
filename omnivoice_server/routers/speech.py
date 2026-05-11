@@ -272,7 +272,10 @@ async def _stream_sse(
 
         for tensor in result.tensors:
             if not ttfc_logged:
-                logger.info("[speech] client=%s voice=%s ttfc=%.3fs", client, body.voice, time.monotonic() - t0)
+                logger.info(
+                    "[speech] client=%s voice=%s ttfc=%.3fs",
+                    client, body.voice, time.monotonic() - t0,
+                )
                 ttfc_logged = True
             audio_b64 = _tensor_to_base64_float32(tensor)
             event = json.dumps({

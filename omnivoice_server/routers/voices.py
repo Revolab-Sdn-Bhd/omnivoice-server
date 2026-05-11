@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 import re
 from pathlib import Path
 
@@ -142,7 +143,7 @@ async def upload_voice(
 
     # Save companion metadata
     display_name = sanitized.replace("_", " ").replace("-", " ").title()
-    meta = {"name": display_name}
+    meta: dict[str, Any] = {"name": display_name}
     if gender:
         meta["gender"] = gender
     if language:

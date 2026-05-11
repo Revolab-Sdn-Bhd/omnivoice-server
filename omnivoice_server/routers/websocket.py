@@ -144,9 +144,11 @@ async def tts_websocket(ws: WebSocket):
                 )
             )
             active_tasks.setdefault(ctx_id, []).append(task)
-            task.add_done_callback(
-                lambda t, cid=ctx_id: _cleanup_task(active_tasks, cid, t)
-            )
+            def _make_cleanup(cid: str):
+                def _cb(t: asyncio.Task) -> None:
+                    _cleanup_task(active_tasks, cid, t)
+                return _cb
+            task.add_done_callback(_make_cleanup(ctx_id))
 
             if not cont:
                 # Wait for completion then send done
