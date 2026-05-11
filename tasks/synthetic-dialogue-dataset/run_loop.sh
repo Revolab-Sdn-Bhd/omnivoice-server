@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Run pipeline in a loop until target hours reached.
-# Pipeline and ASR validation run as independent background processes.
-# Pipeline never waits for ASR — both GPUs stay busy.
-# Usage: ./run_loop.sh [target_hours]
+# Uses flock to ensure only one instance runs at a time.
 set -euo pipefail
 
 TARGET_HOURS="${1:-1000}"
@@ -10,10 +8,19 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VENV_PYTHON="$PROJECT_DIR/.venv/bin/python"
 LOG="/tmp/pipeline-loop.log"
+LOCKFILE="/tmp/pipeline-loop.lock"
 VALIDATE_INTERVAL=120
 HF_UPLOAD_INTERVAL=1800
 PIPELINE_TIMEOUT=7200
 OUTPUT_DIR="$PROJECT_DIR/output/synthetic-dialogue"
+
+# Ensure only one instance runs at a time
+exec 200>"$LOCKFILE"
+if ! flock -n 200; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') Another run_loop.sh is already running (lock held). Exiting." >> "$LOG"
+    exit 0
+fi
+echo "Lock acquired: PID $$" >&200
 
 get_hours() {
     $VENV_PYTHON -c "
@@ -78,7 +85,7 @@ while true; do
     echo "$(date '+%Y-%m-%d %H:%M:%S') Running pipeline..." | tee -a "$LOG"
     cd "$PROJECT_DIR"
 
-    timeout "$PIPELINE_TIMEOUT" $VENV_PYTHON "$SCRIPT_DIR/run_pipeline_async.py" --max-concurrent 16 --continuous >> "$LOG" 2>&1 || \
+    timeout "$PIPELINE_TIMEOUT" $VENV_PYTHON "$SCRIPT_DIR/run_pipeline_async.py" --max-concurrent 32 --continuous >> "$LOG" 2>&1 || \
         echo "$(date '+%Y-%m-%d %H:%M:%S') Pipeline timed out or failed (exit $?), continuing..." >> "$LOG"
 
     new_hours=$(get_hours)
@@ -89,8 +96,10 @@ done
 echo "$(date '+%Y-%m-%d %H:%M:%S') Stopping background processes..." | tee -a "$LOG"
 kill "$ASR_PID" 2>/dev/null || true
 kill "$HF_PID" 2>/dev/null || true
+kill "$REBUILD_PID" 2>/dev/null || true
 wait "$ASR_PID" 2>/dev/null || true
 wait "$HF_PID" 2>/dev/null || true
+wait "$REBUILD_PID" 2>/dev/null || true
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') Running final ASR validation..." | tee -a "$LOG"
 export CUDA_VISIBLE_DEVICES=0

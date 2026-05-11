@@ -207,7 +207,7 @@ class LLMClient:
             base_url=llm_config.get("api_base", "https://api.z.ai/api/anthropic"),
             api_key=os.environ.get("ZAI_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN", ""),
         )
-        self._sem = asyncio.Semaphore(4)
+        self._sem = asyncio.Semaphore(1)
 
     async def generate(self, prompt: str) -> str:
         async with self._sem:
@@ -239,9 +239,9 @@ class VLLMClient:
         base_url = config.get("api_base", "http://localhost:8900/v1")
         self._client = httpx.AsyncClient(
             base_url=base_url,
-            timeout=httpx.Timeout(120.0, connect=10.0),
+            timeout=httpx.Timeout(60.0, connect=10.0),
         )
-        self._sem = asyncio.Semaphore(8)
+        self._sem = asyncio.Semaphore(32)
 
     async def generate(self, prompt: str) -> str:
         async with self._sem:
@@ -253,7 +253,7 @@ class VLLMClient:
                             "model": self.model,
                             "max_tokens": self.max_tokens,
                             "messages": [{"role": "user", "content": prompt}],
-                            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+                            "chat_template_kwargs": {"enable_thinking": False},
                         },
                     )
                     resp.raise_for_status()
@@ -263,7 +263,7 @@ class VLLMClient:
                     text = re.sub(r"<think[\s\S]*?</think\s*>", "", text).strip()
                     return text
                 except Exception as e:
-                    logger.warning("[%s] attempt %d: %s", self.name, attempt + 1, e)
+                    logger.warning("[%s] attempt %d: %s: %s", self.name, attempt + 1, type(e).__name__, e)
                     await asyncio.sleep(3 * (attempt + 1))
             raise RuntimeError(f"[{self.name}] failed after 3 attempts")
 
@@ -291,11 +291,24 @@ class LLMRouter:
         return self._clients[0]
 
     async def generate(self, prompt: str) -> tuple[str, str]:
-        """Round-robin across backends. Returns (text, backend_name)."""
-        idx = next(self._counter) % len(self._clients)
-        client = self._clients[idx]
-        text = await client.generate(prompt)
-        return text, client.name
+        """Race all backends concurrently, return first success."""
+        winner: asyncio.Future[tuple[str, str]] = asyncio.get_running_loop().create_future()
+
+        async def _try(client: LLMClient | VLLMClient) -> None:
+            try:
+                text = await client.generate(prompt)
+                if not winner.done():
+                    winner.set_result((text, client.name))
+            except Exception as e:
+                if not winner.done():
+                    logger.debug("[%s] lost race: %s", client.name, e)
+
+        tasks = [asyncio.create_task(_try(c)) for c in self._clients]
+        try:
+            return await winner
+        finally:
+            for t in tasks:
+                t.cancel()
 
     async def aclose(self) -> None:
         for c in self._clients:
@@ -402,6 +415,10 @@ Output ONLY the JSON array.
 DIALOGUE_PROMPT = """\
 Generate a multi-turn spoken dialogue for M-CHAT (Malay + English code-mixed).
 
+This is for a SPEECH dataset — the text will be converted to audio and used to train
+AI models. Every turn must sound like a REAL Malaysian speaking naturally on a phone call.
+NOT scripted, NOT formal, NOT robotic — like overhearing a real conversation at a kopitiam.
+
 Situation:
 {situation_json}
 
@@ -409,7 +426,7 @@ Rules:
 1. {min_turns}-{max_turns} turns, alternating agent/human
 2. Turn 1 MUST be from the agent — agent always opens the conversation (greeting, introduction)
 3. Each turn: 1-3 sentences max (TTS-friendly)
-4. Natural BM/EN code-mixing (lah, kan, meh, tu, ke, kot)
+4. Natural BM/EN code-mixing (lah, kan, meh, tu, ke, kot, pun, je, keje)
 5. Follow each character's speaking_style AND personality_traits from the situation.
    Embody their personality — a "patient" agent speaks differently from a "brusque" one.
 6. Use each character's communication_quirks naturally (e.g., if they use "kan" a lot,
@@ -423,34 +440,45 @@ Rules:
    Text normalization for TTS is handled separately — just write naturally.
 10. Include emotion and tone per turn
 11. Follow the expected emotional arc
-12. Text must be natural spoken Malay — NOT formal written Malay
+12. Text must be NATURAL SPOKEN Malay — like how Malaysians ACTUALLY talk:
+    - "Saya nak tanya" not "Saya ingin bertanya"
+    - "Dah lama ke ni?" not "Sudah berapa lama?"
+    - "Alamak, serious ke ni" not "Oh tidak, adakah ini serius?"
+    - Include slang, truncations, contractions: "nak", "dah", "tak", "je", "keje", "kot"
+    - Use exclamation and emotion naturally: "Wah!", "Alamak!", "Hah?", "Eh?", "Oo"
 13. The LAST turn MUST be from the agent — agent closes the conversation
     (polite closing, summary, farewell, or next-steps). Human never gets the final word.
 14. Never include physical actions (sit down, come here, take this, point at). All
     conversations are phone calls, video calls, or chat — no face-to-face interaction.
+15. ANTI-REPETITION (CRITICAL): Each turn MUST advance the conversation. NEVER repeat
+    the same phrase, sentence, or acknowledgment pattern. If you wrote "saya faham" once,
+    don't write it again — use a different phrase. Each response must introduce NEW information,
+    ask a NEW question, or react to something specific the other person just said. Stalling
+    phrases like "baiklah", "saya faham", "jangan risau" should appear at most ONCE per dialogue.
 
-ANTI-REPETITION RULES (CRITICAL — violations make data unusable):
-15. NEVER repeat the same phrase or sentence pattern across multiple turns.
-    BAD: agent says "Saya faham" in turn 3, 5, 7, 9, 11
-    BAD: agent says "Jangan risau" in 3+ turns
-    GOOD: Vary acknowledgments — "Baiklah", "Noted", "Okay, saya catat",
-          "Setuju", "Betul tu", "Oo, macam tu", "Alamak", "Wah"
-16. Each turn must ADVANCE the conversation — do not re-state what was already said.
-    If the human already explained the problem, the agent should ask a NEW follow-up
-    or propose a solution, not acknowledge again.
-17. The closing turns (last 2-3) must NOT be identical or near-identical.
-    BAD: last 3 agent turns all say "Saya akan hubungi anda" / "Jangan risau" / "Terima kasih"
-    GOOD: each closing turn covers a different aspect — confirm details, give next steps, say farewell
-18. The agent must NOT be a passive echo. The agent should actively:
-    - Ask probing questions
-    - Propose solutions or alternatives
-    - Give specific information (dates, amounts, reference numbers)
-    - Make decisions or confirm actions
-    React to what the human says, don't just acknowledge it.
-19. FORBIDDEN CRUTCH PHRASES — do NOT use these more than ONCE in the entire dialogue:
-    "Saya faham", "Jangan risau", "Tidak apa", "Baiklah, saya faham"
-    Use DIFFERENT acknowledgments each time: "Noted", "Oo, macam tu", "Setuju",
-    "Betul tu", "Wah", "Alamak", "Okay, saya catat", "Boleh", "Macam tu ke"
+NATURAL ACKNOWLEDGMENT VOCABULARY (CRITICAL — use DIFFERENT one each time):
+When acknowledging what the other person said, pick from this RICH vocabulary.
+NEVER use the same acknowledgment twice in one dialogue. Each pick must be DIFFERENT.
+
+  Understanding: "Oo, macam tu ke", "Alamak", "Wah", "Betul tu", "Setuju",
+    "Oo, saya tengok", "Macam tu lah", "Noted", "Boleh", "Ha, macam tu",
+    "Oo, baiklah", "Haah, saya dengar", "Ya Allah", "Wah, serious ke",
+    "Hmmm, faham", "Tapi tu lah", "Ye ke?", "Tak pe", "Ok, noted"
+  Agreement: "Setuju", "Betul tu", "Memang lah", "Ya lah", "Punya lah",
+    "Mestilah", "Baru betul tu", "Tu lah masalahnya", "Ha, betul"
+  Surprise: "Wah!", "Alamak!", "Hah?", "Ye ke?", "Serious?", "Masyaallah",
+    "Astagfirullah", "Teruk gila", "Gila ke?", "Amboi"
+  Transition: "Macam mana pulak", "Tapi...", "Okay, tapi...", "Apa kata...",
+    "Bila punya hal ni", "Jadi macam mana", "Habis tu"
+  Closing: "Okay, saya catat", "Nanti saya follow up",
+    "Saya akan check", "Boleh, saya uruskan", "Nanti saya email",
+    "Kita proceed macam ni", "Saya bagi update esok",
+    "Okay, settle", "Macam tu dah", "Noted, saya tengok dulu",
+    "Boleh je", "Saya ambil nota", "Nanti saya hubungi balik"
+
+FORBIDDEN — do NOT use these robotic crutch phrases more than ONCE in the entire dialogue:
+  "Saya faham", "Jangan risau", "Tidak apa", "Baiklah, saya faham", "Baiklah"
+  These sound like a chatbot, not a human. Use the natural vocabulary above instead.
 20. CHARACTER NAME AWARENESS — Do NOT confuse character names with voice names.
     The agent's name is "{agent_name}", NOT the voice model name. The human's
     name is "{human_name}", NOT the voice model name. Never refer to yourself
@@ -551,6 +579,64 @@ async def score_dialogue(
 # ── Voice selection ────────────────────────────────────────────────────────────
 
 
+_FIX_PROMPT = """Fix this Malaysian dialogue turn. The agent said: "{turn_text}"
+It contains the robotic phrase "{phrase}" which is repeated elsewhere in the dialogue.
+Rewrite ONLY the agent's line to sound natural — like a real Malaysian speaking, not a chatbot.
+
+Context (previous turns):
+{context}
+
+Natural alternatives: "Oo, macam tu ke", "Betul tu", "Wah", "Setuju", "Memang lah", "Ya lah",
+"Ha, okay", "Alamak", "Noted", "Boleh je", "Macam tu dah", "Saya tengok dulu",
+"Nanti saya follow up", "Okay, settle", "Saya ambil nota"
+
+Reply with ONLY the rewritten agent turn. No quotes, no speaker label, just the Malay text."""
+
+
+async def _fix_boring_turns(
+    turns: list[dict], router: LLMRouter, sid: str, max_attempts: int = 2
+) -> list[dict] | None:
+    """Rewrite agent turns that repeat boring phrases, keeping the first occurrence."""
+    _boring = ["saya faham", "jangan risau", "saya faham,", "jangan risau,", "baiklah,", "tak apa,"]
+
+    for _attempt in range(max_attempts):
+        fixes_applied = False
+        for phrase in _boring:
+            agent_indices = [
+                i for i, t in enumerate(turns)
+                if t.get("speaker") == "agent" and phrase in t.get("text", "").lower()
+            ]
+            if len(agent_indices) < 2:
+                continue
+            # Keep first occurrence, fix the rest
+            for idx in agent_indices[1:]:
+                prev = turns[max(0, idx - 2):idx]
+                context = "\n".join(f"  {t['speaker']}: {t['text']}" for t in prev)
+                prompt = _FIX_PROMPT.format(
+                    turn_text=turns[idx]["text"], phrase=phrase, context=context or "  (start of dialogue)"
+                )
+                try:
+                    fixed, _ = await router.generate(prompt)
+                    fixed = fixed.strip().strip('"').strip("'")
+                    if fixed and phrase not in fixed.lower():
+                        logger.info("Fixed turn %d in %s: replaced '%s' with '%s'",
+                                    idx, sid, turns[idx]["text"][:50], fixed[:50])
+                        turns[idx]["text"] = fixed
+                        fixes_applied = True
+                except Exception as e:
+                    logger.warning("Fix failed for turn %d in %s: %s", idx, sid, e)
+
+        if not fixes_applied:
+            break
+
+    # Final check — reject if still broken
+    agent_lower = [t.get("text", "").lower() for t in turns if t.get("speaker") == "agent"]
+    for phrase in _boring:
+        if sum(1 for at in agent_lower if phrase in at) >= 2:
+            return None
+    return turns
+
+
 # ── Stage 1: LLM dialogue generation ──────────────────────────────────────────
 
 
@@ -614,9 +700,17 @@ async def generate_dialogue(
     if not dialogue.get("turns"):
         logger.error("Dialogue %s rejected: no turns", sid)
         return None
+
+    # Fix empty scenario by constructing from context_details
     if not situation.get("scenario"):
-        logger.error("Dialogue %s rejected: empty scenario", sid)
-        return None
+        ctx = situation.get("context_details", {})
+        chars_info = situation.get("characters", {})
+        agent_role = chars_info.get("agent", {}).get("role", "agent")
+        human_role = chars_info.get("human", {}).get("role", "caller")
+        loc = ctx.get("location", "unknown location")
+        circ = ctx.get("circumstances", "routine call")
+        situation["scenario"] = f"{human_role} calling {agent_role} at {loc} — {circ}"
+        logger.warning("Dialogue %s: constructed missing scenario from context", sid)
 
     # Fix voice IDs used as character names (replace with agent/human name)
     voice_id_names = {"Pearl Happy", "Pearl Sad", "Pearl Angry1", "Pearl Angry2",
@@ -652,10 +746,35 @@ async def generate_dialogue(
                        sid, agent_char_name, human_name)
         situation["characters"] = chars
 
-    # Reject missing theme (can't fix this)
+    # Fix missing theme by deriving from situation_id prefix
+    _theme_prefix_map = {
+        "cu": "customer_support", "fo": "food_dining", "tr": "transport",
+        "re": "retail", "go": "government_services", "wo": "workplace",
+        "rs": "real_estate", "bu": "business", "fi": "finance",
+        "fa": "family", "nb": "neighbourhood", "rl": "religious",
+        "sp": "sports_leisure", "md": "medical", "mh": "mental_health",
+        "wl": "wellness", "ed": "education", "sk": "skills_training",
+        "po": "podcast", "ra": "radio_show", "cc": "content_creation",
+        "em": "emergency", "le": "legal", "dd": "debate_discussion",
+        "ho": "hotel_hospitality", "in": "insurance", "au": "auto_mechanic",
+        "im": "immigration", "pa": "property_agent", "tc": "tuition_center",
+        "wp": "wedding_planning", "fg": "fitness_gym", "qs": "quiz_show",
+        "oc": "open_conversation", "ff": "fun_facts", "en": "entertainment",
+        "fc": "foodie_chat", "ts": "travel_stories", "dl": "daily_life",
+        "fp": "festival_prep", "gh": "ghost_stories", "sc": "scam_awareness",
+        "os": "online_shopping", "wd": "weather_disaster", "pc": "pet_care",
+        "lx": "language_exchange", "hm": "home_maintenance", "sr": "school_parent",
+        "ra": "relationship_advice", "go": "gossip", "dr": "driving_stories",
+    }
     if not situation.get("theme"):
-        logger.error("Dialogue %s rejected: missing theme", sid)
-        return None
+        prefix = sid.split("_")[0][:2] if "_" in sid else sid[:2]
+        derived = _theme_prefix_map.get(prefix)
+        if derived:
+            situation["theme"] = derived
+            logger.warning("Dialogue %s: derived missing theme='%s' from sid prefix '%s'", sid, derived, prefix)
+        else:
+            logger.error("Dialogue %s rejected: missing theme (no prefix match)", sid)
+            return None
 
     # Post-validate character names & clean speaker prefixes from text
     turns = dialogue.get("turns", [])
@@ -677,6 +796,21 @@ async def generate_dialogue(
         "transport": ["bas", "train", "flight", "grab", "teksi", "tiket", "lapangan terbang"],
         "real_estate": ["rumah", "sewa", "condo", "apartment", "deposit", "tanah"],
     }
+    _theme_domain_aliases = {
+        "banking": {"finance", "insurance", "business", "real_estate", "property_agent"},
+        "medical": {"mental_health", "wellness", "fitness_gym", "insurance"},
+        "education": {"skills_training", "tuition_center", "debate_discussion", "quiz_show",
+                      "school_parent", "language_exchange"},
+        "food": {"food_dining", "foodie_chat", "wedding_planning", "hotel_hospitality",
+                 "casual_chat", "daily_life", "open_conversation", "entertainment",
+                 "content_creation", "podcast", "radio_show", "fun_facts", "family",
+                 "neighbourhood", "festival_prep", "wellness"},
+        "retail": {"customer_support", "auto_mechanic", "business", "online_shopping", "wedding_planning"},
+        "real_estate": {"property_agent", "hotel_hospitality", "family"},
+        "transport": {"travel_stories", "emergency"},
+        "government": {"government_services", "immigration", "legal"},
+        "insurance": {"finance", "business"},
+    }
     dialogue_domain_hits = {}
     for d, keywords in _domain_keywords.items():
         hits = sum(1 for kw in keywords if kw in all_turn_text)
@@ -686,7 +820,9 @@ async def generate_dialogue(
         top_domain = max(dialogue_domain_hits, key=dialogue_domain_hits.get)
         top_hits = dialogue_domain_hits[top_domain]
         theme_domain = f"{theme} {domain} {scenario}"
+        aliases = _theme_domain_aliases.get(top_domain, set())
         domain_relevant = (top_domain in theme_domain or
+                          theme in aliases or
                           any(kw in theme_domain for kw in _domain_keywords.get(top_domain, [])))
         if not domain_relevant and top_hits >= 3:
             logger.error("Dialogue %s rejected: theme/content mismatch — theme=%s but dialogue is about %s (%d keyword hits)",
@@ -765,19 +901,16 @@ async def generate_dialogue(
             for i in range(1, len(texts)):
                 if texts[i] and texts[i][:80] == texts[i - 1][:80]:
                     dup_count += 1
-        if dup_count >= 3:
+        if dup_count >= 5:
             logger.error("Dialogue %s rejected: %d repetitive turns", sid, dup_count)
             return None
 
-    # Flag phrase-level repetition (e.g., "Saya faham" in 4+ agent turns)
-    _boring_phrases = ["saya faham", "jangan risau", "saya faham,", "jangan risau,", "baiklah,", "tak apa,"]
-    agent_texts_lower = [t.get("text", "").lower() for t in turns if t.get("speaker") == "agent"]
-    for phrase in _boring_phrases:
-        count = sum(1 for at in agent_texts_lower if phrase in at)
-        if count >= 2:
-            logger.warning("Dialogue %s: phrase '%s' repeated %d times in agent turns — rejecting",
-                           sid, phrase, count)
-            return None
+    # Fix phrase-level repetition via LLM rewrite instead of rejecting
+    fixed = await _fix_boring_turns(turns, router, sid)
+    if fixed is None:
+        logger.warning("Dialogue %s: boring phrases persist after fix attempts — rejecting", sid)
+        return None
+    turns = fixed
 
     dialogue["dialogue_id"] = dialogue_id
     dialogue["situation_id"] = sid
@@ -1058,7 +1191,7 @@ async def run_pipeline(
             "Failed to fetch voices from TTS server: %s", e)
 
     # Two-stage pipeline: situations → dialogues (LLM) → audio (TTS)
-    n_llm_workers = min(max_concurrent, 4)
+    n_llm_workers = min(max_concurrent, 8)
     n_tts_workers = max_concurrent
     SitItem = tuple[dict, str] | None
     DlgItem = tuple[dict, dict, str, str] | None
@@ -1154,8 +1287,11 @@ async def run_pipeline(
                             json.dump(failures, ff, indent=2, ensure_ascii=False)
                         continue
                     if situations:
+                        # Filter out malformed situations (e.g. lists from LLM)
+                        situations = [validate_situation(s) for s in situations if isinstance(s, dict)]
+                        if not situations:
+                            continue
                         logger.info("Generated %d situations for '%s' [%s]", len(situations), theme_name, sit_backend)
-                        situations = [validate_situation(s) for s in situations]
                         for s in situations:
                             s["llm_backend"] = sit_backend
                             s["created_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")

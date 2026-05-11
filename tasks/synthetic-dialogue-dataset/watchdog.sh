@@ -9,7 +9,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VENV_PYTHON="$PROJECT_DIR/.venv/bin/python"
 LOG="/tmp/pipeline-watchdog.log"
 PIPELINE_LOG="/tmp/pipeline-loop.log"
-CHECK_INTERVAL=600  # 10 minutes
+CHECK_INTERVAL=600 # 10 minutes
 
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') $1" | tee -a "$LOG"
@@ -72,13 +72,30 @@ check_and_fix() {
         fi
     fi
     
-    # 3. Check ASR validator is running
+    # 3. Check TTS server — use /health endpoint (lightweight, won't compete with real requests)
+    TTS_OK=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:8881/health 2>/dev/null || echo "000")
+
+    if [ "$TTS_OK" != "200" ]; then
+        log "WARN: TTS (port 8881) unresponsive (HTTP $TTS_OK), restarting..."
+        ps aux | grep "omnivoice.*8881" | grep -v grep | awk '{print $2}' | xargs kill -9 2>/dev/null || true
+        sleep 3
+        cd "$PROJECT_DIR"
+        CUDA_VISIBLE_DEVICES=2 nohup uv run python -m omnivoice_server.cli \
+            --host 0.0.0.0 --port 8881 --device cuda --max-concurrent 32 --batch-enabled \
+            > /tmp/tts_8881.log 2>&1 &
+        TTS_PID=$!
+        log "TTS restarted: port 8881 PID $TTS_PID (GPU2, batch mode)"
+    else
+        log "OK: TTS server healthy (8881=$TTS_OK)"
+    fi
+
+    # 4. Check ASR validator is running
     ASR_PID=$(pgrep -f "05_validate_asr.py" 2>/dev/null || echo "")
     if [ -z "$ASR_PID" ]; then
         log "WARN: ASR validator not running (run_loop will restart it)"
     fi
-    
-    # 4. Quick GPU check
+
+    # 5. Quick GPU check
     GPU1_UTIL=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits -i 1 2>/dev/null || echo "0")
     if [ "$GPU1_UTIL" -lt 5 ] 2>/dev/null; then
         log "WARN: GPU 1 (vLLM) utilization: ${GPU1_UTIL}%"
