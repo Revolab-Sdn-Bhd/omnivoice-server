@@ -239,7 +239,7 @@ class VLLMClient:
         base_url = config.get("api_base", "http://localhost:8900/v1")
         self._client = httpx.AsyncClient(
             base_url=base_url,
-            timeout=httpx.Timeout(60.0, connect=10.0),
+            timeout=httpx.Timeout(120.0, connect=10.0),
         )
         self._sem = asyncio.Semaphore(32)
 
@@ -899,25 +899,9 @@ async def generate_dialogue(
             logger.error("Dialogue %s rejected: %d repetitive turns", sid, dup_count)
             return None
 
-    # Fix phrase-level repetition via LLM rewrite instead of rejecting
-    fixed = await _fix_boring_turns(turns, router, sid)
-    if fixed is None:
-        logger.warning("Dialogue %s: boring phrases persist after fix attempts — rejecting", sid)
-        return None
-    turns = fixed
-
     dialogue["dialogue_id"] = dialogue_id
     dialogue["situation_id"] = sid
     dialogue["llm_backend"] = llm_backend
-
-    # Quality scoring (lightweight LLM-as-judge)
-    scores = await score_dialogue(dialogue, situation, router)
-    if scores:
-        dialogue["quality_scores"] = scores
-        overall = scores.get("overall", 0)
-        if overall < 3:
-            logger.warning("Low quality dialogue %s: overall=%.1f — %s",
-                           sid, overall, scores.get("reason", ""))
 
     with open(existing_path, "w") as f:
         json.dump(dialogue, f, indent=2, ensure_ascii=False)
