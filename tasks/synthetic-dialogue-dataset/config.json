@@ -3,7 +3,7 @@
   "llm": {
     "api_base": "https://api.z.ai/api/anthropic",
     "model": "glm-4.5-air",
-    "max_tokens": 4096
+    "max_tokens": 8192
   },
   "llm_backends": [
     {
@@ -25,7 +25,7 @@
     "servers": [
       {
         "url": "http://localhost:8881",
-        "max_concurrent": 16
+        "max_concurrent": 32
       }
     ],
     "default_temperature": 0.3,

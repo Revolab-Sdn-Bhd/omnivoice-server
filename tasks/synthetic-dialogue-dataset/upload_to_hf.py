@@ -139,11 +139,13 @@ def build_staging_dir(final_dir: Path, skip_existing: set[str] | None = None) ->
     """Create a temp dir with sharded data_stereo structure using symlinks."""
     staging = Path(tempfile.mkdtemp(prefix="omnidialog_upload_"))
 
-    # Sharded JSONL
+    # Sharded JSONL with merged word-level alignment
     src = final_dir / "dataset.jsonl"
+    data_dir = final_dir / "data_stereo"
     if src.exists():
         lines = src.read_text().strip().split("\n")
         sharded = []
+        merged = 0
         for line in lines:
             rec = json.loads(line)
             old_path = rec.get("path", "")
@@ -151,9 +153,22 @@ def build_staging_dir(final_dir: Path, skip_existing: set[str] | None = None) ->
                 fname = old_path[len("data_stereo/"):]
                 shard = get_shard_key(fname)
                 rec["path"] = f"data_stereo/{shard}/{fname}"
+                # Merge companion JSON with word-level alignment
+                base = fname.rsplit(".", 1)[0]
+                companion = data_dir / f"{base}.json"
+                if companion.exists():
+                    try:
+                        with open(companion) as cf:
+                            comp = json.load(cf)
+                        rec["turns"] = comp.get("turns", [])
+                        rec["situation"] = comp.get("situation", {})
+                        rec["dialogue_id"] = comp.get("dialogue_id", base)
+                        merged += 1
+                    except Exception as e:
+                        logger.warning("Failed to merge companion %s: %s", companion.name, e)
             sharded.append(json.dumps(rec, ensure_ascii=False))
         (staging / "omnidialog.jsonl").write_text("\n".join(sharded) + "\n")
-        logger.info("Built sharded JSONL (%d entries)", len(sharded))
+        logger.info("Built sharded JSONL (%d entries, %d with word alignment)", len(sharded), merged)
 
     # README
     (staging / "README.md").write_text(DATASET_CARD)
