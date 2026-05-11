@@ -11,6 +11,7 @@ import asyncio
 import base64
 import json
 import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -58,7 +59,10 @@ async def _send_buffered_chunks(
             "status_code": 206,
             "context_id": ctx_id,
         })
-        await ws.send_text(chunk_msg)
+        try:
+            await ws.send_text(chunk_msg)
+        except (WebSocketDisconnect, AssertionError):
+            return chunk_idx
         chunk_idx += 1
     return chunk_idx
 
@@ -79,6 +83,8 @@ def _resolve_voice_path(voice_id: str, cfg) -> tuple[str | None, str | None]:
 async def tts_websocket(ws: WebSocket):
     """Cartesia-compatible WebSocket endpoint for real-time streaming TTS."""
     await ws.accept()
+    client = ws.client.host if ws.client else "unknown"
+    logger.info("[ws] connected client=%s", client)
 
     # Track cancellation per context_id
     cancelled_contexts: set[str] = set()
@@ -120,11 +126,17 @@ async def tts_websocket(ws: WebSocket):
                     await _send_done(ws, ctx_id)
                 continue
 
+            t0 = time.monotonic()
+            logger.info(
+                "[ws] recv ctx=%s voice=%s text=%r",
+                ctx_id, voice_id, transcript,
+            )
+
             # Launch synthesis in background task
             task = asyncio.create_task(
                 _process_transcript(
                     ws, msg, ctx_id, transcript, language, voice_id,
-                    cancelled_contexts, active_tasks,
+                    cancelled_contexts, active_tasks, t0,
                 )
             )
             active_tasks.setdefault(ctx_id, []).append(task)
@@ -143,7 +155,7 @@ async def tts_websocket(ws: WebSocket):
                 await _send_done(ws, ctx_id)
 
     except WebSocketDisconnect:
-        logger.debug("WebSocket disconnected")
+        logger.info("[ws] disconnected client=%s", client)
     except Exception:
         logger.exception("WebSocket error")
     finally:
@@ -162,6 +174,7 @@ async def _process_transcript(
     voice_id: str,
     cancelled_contexts: set[str],
     active_tasks: dict[str, list[asyncio.Task]],
+    t0: float,
 ) -> None:
     """Process a single transcript message: split sentences, synthesize, stream."""
     import numpy as np
@@ -177,10 +190,14 @@ async def _process_transcript(
     sentences = split_sentences(transcript, max_chars=cfg.stream_chunk_max_chars)
     pcm_buffer = bytearray()
     chunk_idx = 0
+    ttfc_logged = False
 
-    for sentence in sentences:
+    for i, sentence in enumerate(sentences):
         if ctx_id in cancelled_contexts:
             return
+
+        logger.info("[ws] ctx=%s sentence[%d] %r", ctx_id, i, sentence)
+        t_sent = time.monotonic()
 
         syn_req = SynthesisRequest(
             text=sentence,
@@ -200,20 +217,30 @@ async def _process_transcript(
             await _send_error(ws, str(e), ctx_id)
             return
 
+        logger.info(
+            "[ws] ctx=%s sentence[%d] synthesis=%.3fs",
+            ctx_id, i, time.monotonic() - t_sent,
+        )
+
         for tensor in result.tensors:
             if ctx_id in cancelled_contexts:
                 return
             flat = tensor.squeeze(0).cpu().float().numpy()
             pcm = (flat * 32767).clip(-32768, 32767).astype(np.int16)
             pcm_buffer.extend(pcm.tobytes())
+            prev_idx = chunk_idx
             chunk_idx = await _send_buffered_chunks(
                 ws, pcm_buffer, ctx_id, cancelled_contexts, chunk_idx,
             )
+            if not ttfc_logged and chunk_idx > prev_idx:
+                logger.info("[ws] ctx=%s ttfc=%.3fs", ctx_id, time.monotonic() - t0)
+                ttfc_logged = True
 
     # Flush remaining buffer
     await _send_buffered_chunks(
         ws, pcm_buffer, ctx_id, cancelled_contexts, chunk_idx, flush=True,
     )
+    logger.info("[ws] ctx=%s total=%.3fs chunks=%d", ctx_id, time.monotonic() - t0, chunk_idx)
 
 
 def _cleanup_task(

@@ -160,7 +160,7 @@ class Settings(BaseSettings):
         description="HuggingFace dataset repo for voice reference audio",
     )
     voices_dir: Path = Field(
-        default=Path("omnivoice_server/static/speakers"),
+        default=Path(__file__).parent / "static" / "speakers",
         description="Local directory for voice WAV files (auto-populated from HF if empty)",
     )
 
