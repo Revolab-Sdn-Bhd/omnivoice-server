@@ -129,7 +129,7 @@ class TTSRequest(BaseModel):
     max_tokens: int = Field(default=1000, ge=1)
     num_step: int | None = Field(default=None, ge=8, le=32)
     target_lufs: float = Field(default=-23.0, ge=-60.0, le=0.0)
-    trim_front_seconds: float = Field(default=0.5, ge=0.0, le=5.0)
+    trim_front_seconds: float = Field(default=0.0, ge=0.0, le=5.0)
     instruct: str | None = Field(
         default=None, description="Voice design instruction",
     )

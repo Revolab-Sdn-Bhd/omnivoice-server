@@ -155,9 +155,13 @@ class Settings(BaseSettings):
     )
 
     # Voices directory (WAV files for SepBox-compatible voice management)
+    voices_hf_repo: str = Field(
+        default="Revolab/voices",
+        description="HuggingFace dataset repo for voice reference audio",
+    )
     voices_dir: Path = Field(
         default=Path("omnivoice_server/static/speakers"),
-        description="Directory containing voice WAV files",
+        description="Local directory for voice WAV files (auto-populated from HF if empty)",
     )
 
     # Audio post-processing

@@ -12,6 +12,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -41,8 +42,15 @@ async def lifespan(app: FastAPI):
     cfg.profile_dir.mkdir(parents=True, exist_ok=True)
     app.state.profile_svc = ProfileService(profile_dir=cfg.profile_dir)
 
-    # Ensure voices directory exists
-    cfg.voices_dir.mkdir(parents=True, exist_ok=True)
+    # Download voices from HuggingFace if configured
+    if cfg.voices_hf_repo:
+        from huggingface_hub import snapshot_download
+        logger.info("Downloading voices from %s...", cfg.voices_hf_repo)
+        hf_cache = snapshot_download(cfg.voices_hf_repo, repo_type="dataset")
+        cfg.voices_dir = Path(hf_cache) / "data"
+        logger.info("Voices ready at %s", cfg.voices_dir)
+    else:
+        cfg.voices_dir.mkdir(parents=True, exist_ok=True)
 
     # Auto-register profiles from voice_samples/
     _auto_register_voice_samples(app.state.profile_svc)

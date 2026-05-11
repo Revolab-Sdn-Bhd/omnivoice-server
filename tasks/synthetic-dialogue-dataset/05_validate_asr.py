@@ -239,12 +239,24 @@ def build_final_dataset(config: dict, failed_ids: set[str], validation_dir: Path
     audio_dir = output_dir / "stage4_audio"
     final_dir = output_dir / "final"
     data_stereo_dir = final_dir / "data_stereo"
+    voices_ref_dir = final_dir / "voices"
     final_dir.mkdir(parents=True, exist_ok=True)
     data_stereo_dir.mkdir(parents=True, exist_ok=True)
+    voices_ref_dir.mkdir(parents=True, exist_ok=True)
     # Clean old outputs before rebuild
     for old_file in data_stereo_dir.glob("*"):
         old_file.unlink()
     (final_dir / "dataset.jsonl").unlink(missing_ok=True)
+
+    # Download voices from HuggingFace
+    from huggingface_hub import snapshot_download
+    hf_repo = config.get("voices_hf_repo", "Revolab/voices")
+    logger.info("Downloading voices from %s...", hf_repo)
+    hf_cache = Path(snapshot_download(hf_repo, repo_type="dataset"))
+    voices_src = hf_cache / "data"
+    logger.info("Voices at %s", voices_src)
+
+    copied_voices: set[str] = set()
 
     dataset_entries = []
     stats = {
@@ -300,10 +312,38 @@ def build_final_dataset(config: dict, failed_ids: set[str], validation_dir: Path
                 "theme": "unknown",
                 "domain": "unknown",
             }
+        characters = situation_meta.get("characters", {})
+
+        voice_map = {}
+        for mt in manifest["turns"]:
+            spk = mt.get("speaker", "")
+            vid = mt.get("voice_id", "")
+            if spk and vid and spk not in voice_map:
+                voice_map[spk] = vid
+
+        speakers = {}
+        for role in ("agent", "human"):
+            char = characters.get(role, {})
+            vid = voice_map.get(role, "")
+            speakers[role] = {
+                "voice_id": vid,
+                "name": char.get("name", ""),
+                "gender": char.get("gender", ""),
+                "role": char.get("role", ""),
+                "speaking_style": char.get("speaking_style", ""),
+                "voice_ref_path": f"voices/{vid}.wav" if vid else "",
+            }
+            if vid and vid not in copied_voices:
+                src = voices_src / f"{vid}.wav"
+                if src.exists():
+                    shutil.copy2(src, voices_ref_dir / f"{vid}.wav")
+                    copied_voices.add(vid)
+
         companion = {
             "dialogue_id": dialogue_id,
             "llm_backend": manifest.get("llm_backend", "unknown"),
             "situation": situation_meta,
+            "speakers": speakers,
             "turns": [],
         }
 
@@ -351,6 +391,7 @@ def build_final_dataset(config: dict, failed_ids: set[str], validation_dir: Path
             "duration": round(manifest["total_duration_s"], 2),
             "llm_backend": manifest.get("llm_backend", "unknown"),
             "theme": situation_meta.get("theme", "unknown"),
+            "speakers": speakers,
         })
 
         stats["total_dialogues"] += 1
