@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..services.inference import InferenceService, QueueFullError, SynthesisRequest
 from ..services.metrics import MetricsService
 from ..utils.audio import tensors_to_wav_bytes
-from ..utils.text import split_sentences
+from ..utils.text import normalize_for_tts, split_sentences
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -100,12 +100,25 @@ QUOTES: dict[str, list[str]] = {
 }
 
 
-@router.get("/api/quotes")
+@router.get("/api/quotes", tags=["TTS"])
 async def get_quotes():
     """Returns categorized test sentences for TTS evaluation."""
     # Flatten for backward compat
     all_quotes = [q for qs in QUOTES.values() for q in qs]
     return {"quotes": all_quotes, "categories": QUOTES}
+
+
+@router.post("/api/normalize", tags=["TTS"])
+async def normalize_text_endpoint(request: Request):
+    """Normalize text for TTS and return the result."""
+    body = await request.json()
+    text = body.get("text", "")
+    language = body.get("language", "en")
+    if not text:
+        return {"normalized": "", "original": text}
+    from ..utils.text import normalize_for_tts
+    normalized = normalize_for_tts(text, language=language)
+    return {"normalized": normalized, "original": text}
 
 
 # ── Request model ──────────────────────────────────────────────────────────────
@@ -131,7 +144,6 @@ class TTSRequest(BaseModel):
     t_schedule_mode: str | None = Field(default=None, description="linear or sway")
     sway_coeff: float | None = Field(default=None, description="sway coefficient (default -1.0)")
     target_lufs: float = Field(default=-23.0, ge=-60.0, le=0.0)
-    trim_front_seconds: float = Field(default=0.0, ge=0.0, le=5.0)
     instruct: str | None = Field(
         default=None, description="Voice design instruction",
     )
@@ -177,9 +189,18 @@ def _resolve_voice_path(
         if not p.is_file():
             p = Path(voice_ref_path)
 
-        # Look for companion .txt for ref_text
+        # Look for companion .txt or .json for ref_text
         txt_path = p.with_suffix(".txt")
-        ref_text = txt_path.read_text().strip() if txt_path.exists() else ""
+        json_path = p.with_suffix(".json")
+        if txt_path.exists():
+            ref_text = txt_path.read_text().strip()
+        elif json_path.exists():
+            try:
+                ref_text = json.loads(json_path.read_text()).get("transcript", "")
+            except (json.JSONDecodeError, OSError):
+                ref_text = ""
+        else:
+            ref_text = ""
         return str(p), ref_text
 
     return None, None
@@ -198,8 +219,10 @@ def _build_synthesis_req(body: TTSRequest, cfg) -> SynthesisRequest:
     else:
         mode = "design"
 
+    normalized_text = normalize_for_tts(body.text, language=body.language)
+
     return SynthesisRequest(
-        text=body.text,
+        text=normalized_text,
         mode=mode,
         instruct=body.instruct,
         ref_audio_path=audio_path,
@@ -224,7 +247,7 @@ def _tensor_to_base64_float32(tensor) -> str:
 # ── POST /generate ────────────────────────────────────────────────────────────
 
 
-@router.post("/generate")
+@router.post("/generate", tags=["TTS"])
 async def generate(
     request: Request,
     body: TTSRequest,
@@ -275,7 +298,7 @@ async def generate(
         )
 
     wav_bytes = tensors_to_wav_bytes(
-        result.tensors, target_lufs=body.target_lufs, trim_seconds=body.trim_front_seconds,
+        result.tensors, target_lufs=body.target_lufs,
     )
     return Response(
         content=wav_bytes,
@@ -286,7 +309,7 @@ async def generate(
 # ── POST /generate/stream ─────────────────────────────────────────────────────
 
 
-@router.post("/generate/stream")
+@router.post("/generate/stream", tags=["TTS"])
 async def generate_stream(
     request: Request,
     body: TTSRequest,

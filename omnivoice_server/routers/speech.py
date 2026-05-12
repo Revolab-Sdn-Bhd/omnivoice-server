@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from ..services.inference import InferenceService, QueueFullError, SynthesisRequest
 from ..services.metrics import MetricsService
 from ..utils.audio import encode_tensors, tensors_to_wav_bytes
+from ..utils.text import normalize_for_tts
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -31,7 +32,7 @@ router = APIRouter()
 class OpenAISpeechRequest(BaseModel):
     """OpenAI-compatible TTS request body."""
 
-    model: str = Field(default="sepbox-tts")
+    model: str = Field(default="revovoice")
     input: str = Field(..., min_length=1, max_length=10_000)
     voice: str = Field(default="anwar")
     response_format: Literal["wav", "mp3", "opus"] = Field(default="wav")
@@ -80,7 +81,7 @@ def _build_synthesis_req(body: OpenAISpeechRequest, cfg) -> SynthesisRequest:
         mode = "design"
 
     return SynthesisRequest(
-        text=body.input,
+        text=normalize_for_tts(body.input),
         mode=mode,
         ref_audio_path=audio_path,
         ref_text=ref_text,
@@ -100,7 +101,7 @@ def _tensor_to_base64_float32(tensor) -> str:
 # ── GET /v1/audio/voices ─────────────────────────────────────────────────────
 
 
-@router.get("/audio/voices")
+@router.get("/audio/voices", tags=["OpenAI-compatible"])
 async def list_audio_voices(cfg=Depends(_get_cfg)):
     """OpenAI-compatible voice list."""
     voices_dir: Path = cfg.voices_dir
@@ -120,7 +121,7 @@ async def list_audio_voices(cfg=Depends(_get_cfg)):
 # ── POST /v1/audio/speech ────────────────────────────────────────────────────
 
 
-@router.post("/audio/speech")
+@router.post("/audio/speech", tags=["OpenAI-compatible"])
 async def create_speech(
     request: Request,
     body: OpenAISpeechRequest,
@@ -184,7 +185,7 @@ async def create_speech(
 
     if body.response_format == "wav":
         audio_bytes = tensors_to_wav_bytes(
-            result.tensors, target_lufs=cfg.target_lufs, trim_seconds=cfg.trim_front_seconds,
+            result.tensors, target_lufs=cfg.target_lufs,
         )
         return Response(content=audio_bytes, media_type="audio/wav")
 
