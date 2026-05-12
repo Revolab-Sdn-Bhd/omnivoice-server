@@ -469,9 +469,10 @@ class InferenceService:
         duration_s = sum(t.shape[-1] for t in tensors) / 24_000
         latency_s = time.monotonic() - t0
 
+        rtf = latency_s / duration_s if duration_s > 0 else float("inf")
         logger.debug(
             f"Synthesized {duration_s:.2f}s audio in {latency_s:.2f}s "
-            f"(RTF={latency_s / duration_s:.3f})"
+            f"(RTF={rtf:.3f})"
         )
         return SynthesisResult(
             tensors=tensors,

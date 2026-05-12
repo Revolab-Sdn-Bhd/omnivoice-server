@@ -219,6 +219,13 @@ def find_optimal_batch_size(
                 bs, mean_latency, throughput, vram_after,
             )
 
+            # Stop once latency exceeds 1 second
+            if mean_latency > 1.0:
+                logger.info("Latency >1s at batch=%d, stopping search", bs)
+                gc.collect()
+                torch.cuda.empty_cache()
+                break
+
         except Exception as e:
             logger.warning("Batch=%d failed: %s — stopping search", bs, e)
             gc.collect()

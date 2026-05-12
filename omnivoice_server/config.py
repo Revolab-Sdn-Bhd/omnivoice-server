@@ -33,6 +33,10 @@ class Settings(BaseSettings):
         default="Revolab/omnivoice",
         description="HuggingFace repo ID or local path",
     )
+    model_revision: str = Field(
+        default="",
+        description="Git revision (branch, tag, commit) to load from HuggingFace",
+    )
     model_cache_dir: Path | None = Field(
         default=None,
         description="Override HuggingFace model cache directory",
@@ -168,10 +172,6 @@ class Settings(BaseSettings):
     target_lufs: float = Field(
         default=-23.0,
         description="Target loudness (LUFS) for generated audio normalization",
-    )
-    trim_front_seconds: float = Field(
-        default=0.5,
-        description="Seconds to trim from the front of generated audio",
     )
 
     # Auth
