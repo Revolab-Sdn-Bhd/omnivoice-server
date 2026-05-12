@@ -121,6 +121,61 @@ async def normalize_text_endpoint(request: Request):
     return {"normalized": normalized, "original": text}
 
 
+FRAME_RATE = 25
+
+
+@router.post("/api/estimate-duration", tags=["TTS"])
+async def estimate_duration_endpoint(request: Request):
+    """Estimate audio duration for given text and speaker."""
+    from omnivoice.utils.duration import RuleDurationEstimator
+
+    body = await request.json()
+    text = body.get("text", "")
+    voice_id = body.get("voice_id", "")
+
+    if not text or not voice_id:
+        return {"estimated_duration_s": 0, "estimated_frames": 0, "frame_rate": FRAME_RATE}
+
+    cfg = request.app.state.cfg
+    wav_path = cfg.voices_dir / f"{voice_id}.wav"
+    if not wav_path.is_file():
+        return {"estimated_duration_s": 0, "estimated_frames": 0, "frame_rate": FRAME_RATE}
+
+    # Get ref text and duration from voice metadata
+    from .voices import _load_voice_meta
+    meta = _load_voice_meta(cfg.voices_dir, voice_id)
+    ref_text = meta.get("transcript", "")
+    ref_duration_s = meta.get("duration", 0)
+
+    if not ref_text or ref_duration_s <= 0:
+        return {"estimated_duration_s": 0, "estimated_frames": 0, "frame_rate": FRAME_RATE}
+
+    ref_frames = int(ref_duration_s * FRAME_RATE)
+    estimator = RuleDurationEstimator()
+    ref_weight = estimator.calculate_total_weight(ref_text)
+    target_weight = estimator.calculate_total_weight(text)
+    est_frames = estimator.estimate_duration(text, ref_text, ref_frames)
+    est_duration = est_frames / FRAME_RATE
+
+    return {
+        "estimated_duration_s": round(est_duration, 2),
+        "estimated_frames": int(est_frames),
+        "frame_rate": FRAME_RATE,
+        "ref_duration_s": ref_duration_s,
+        "ref_frames": ref_frames,
+        "formula": {
+            "target_weight": round(target_weight, 1),
+            "ref_weight": round(ref_weight, 1),
+            "speed_factor": round(ref_weight / ref_frames, 3) if ref_frames > 0 else 0,
+            "est_frames": (
+                f"{target_weight:.0f} / ({ref_weight:.0f}"
+                f" / {ref_frames}) = {int(est_frames)}"
+            ),
+            "est_duration": f"{int(est_frames)} / {FRAME_RATE} = {est_duration:.2f}s",
+        },
+    }
+
+
 # ── Request model ──────────────────────────────────────────────────────────────
 
 
@@ -140,10 +195,14 @@ class TTSRequest(BaseModel):
     frequency_penalty: float = Field(default=0.3, ge=0.0)
     min_p: float = Field(default=0.05, ge=0.0, le=1.0)
     max_tokens: int = Field(default=1000, ge=1)
-    num_step: int | None = Field(default=None, ge=8, le=32)
+    num_step: int | None = Field(default=None, ge=2, le=32)
     t_schedule_mode: str | None = Field(default=None, description="linear or sway")
     sway_coeff: float | None = Field(default=None, description="sway coefficient (default -1.0)")
     target_lufs: float = Field(default=-23.0, ge=-60.0, le=0.0)
+    duration: float | None = Field(
+        default=None, ge=0.1, le=60.0,
+        description="Fixed output duration in seconds. None = auto-estimate.",
+    )
     instruct: str | None = Field(
         default=None, description="Voice design instruction",
     )
@@ -228,6 +287,7 @@ def _build_synthesis_req(body: TTSRequest, cfg) -> SynthesisRequest:
         ref_audio_path=audio_path,
         ref_text=ref_text,
         speed=1.0,
+        duration=body.duration,
         num_step=body.num_step,
         language=body.language if body.language != "en" else None,
         class_temperature=body.temperature if body.temperature != 0.3 else None,
@@ -303,6 +363,15 @@ async def generate(
     return Response(
         content=wav_bytes,
         media_type="audio/wav",
+        headers={
+            "X-Latency-S": f"{result.latency_s:.3f}",
+            "X-Audio-Duration-S": f"{result.duration_s:.3f}",
+            "X-RTF": (
+                f"{result.latency_s / result.duration_s:.3f}"
+                if result.duration_s > 0
+                else "inf"
+            ),
+        },
     )
 
 
