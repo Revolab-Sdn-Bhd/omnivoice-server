@@ -295,6 +295,12 @@ def build_final_dataset(config: dict, failed_ids: set[str], validation_dir: Path
             with open(val_path) as f:
                 val = json.load(f)
                 word_data = val.get("turn_words", {})
+                # Prefer words_forced (forced alignment) over ASR words
+                val_turns = val.get("turns", {})
+                for turn_key, td in val_turns.items():
+                    wf = td.get("words_forced")
+                    if wf:
+                        word_data[turn_key] = wf
 
         # Copy MP3 to final
         src_mp3 = dialogue_dir / "combined.mp3"
