@@ -148,12 +148,18 @@ async def refresh_voices(request: Request):
 
     current_dir = str(cfg.voices_dir)
 
-    from huggingface_hub import snapshot_download
     import asyncio
+
+    from huggingface_hub import snapshot_download
 
     loop = asyncio.get_running_loop()
     new_path = await loop.run_in_executor(
-        None, lambda: snapshot_download(cfg.voices_hf_repo, repo_type="dataset"),
+        None,
+        lambda: snapshot_download(
+            cfg.voices_hf_repo,
+            repo_type="dataset",
+            force_download=True,
+        ),
     )
 
     new_voices_dir = _resolve_voices_dir_from_snapshot(Path(new_path))
