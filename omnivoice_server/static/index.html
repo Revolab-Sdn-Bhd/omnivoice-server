@@ -26,6 +26,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .speaker-card .name{font-size:14px;font-weight:500;color:#ddd}
 .speaker-card .play-btn{width:32px;height:32px;border-radius:50%;background:#252525;border:1px solid #333;color:#aaa;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;font-size:12px;flex-shrink:0}
 .speaker-card .play-btn:hover{background:#3b82f6;border-color:#3b82f6;color:#fff}
+.spk-group-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;margin-top:8px;cursor:pointer;user-select:none;border-radius:6px;background:#1a1a1a;border:1px solid #222}
+.spk-group-header:first-child{margin-top:0}
+.spk-group-header:hover{background:#1e1e2e}
+.spk-group-header .label{font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.5px}
+.spk-group-header .count{font-size:11px;color:#555}
+.spk-group-header .arrow{color:#555;font-size:10px;transition:transform .15s}
+.spk-group-header.collapsed .arrow{transform:rotate(-90deg)}
+.spk-group-body{overflow:hidden;transition:max-height .2s}
+.spk-group-body.collapsed{max-height:0 !important}
 
 .sidebar-footer{padding:16px;border-top:1px solid #1e1e1e}
 .upload-btn{width:100%;background:#181818;border:1px dashed #333;border-radius:10px;color:#888;padding:12px;font-size:13px;cursor:pointer;transition:all .15s;text-align:center}
@@ -108,6 +117,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <div class="sidebar">
     <div class="sidebar-header">
       <h2>Speakers</h2>
+      <button onclick="refreshVoices(this)" title="Refresh speakers from HuggingFace" style="background:none;border:1px solid #333;color:#888;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:14px">&#8635;</button>
     </div>
     <div class="sidebar-body" id="speaker-list">
       <!-- populated by JS -->
@@ -292,9 +302,43 @@ async function loadSpeakers() {
   }
 }
 
+async function refreshVoices(btn) {
+  btn.disabled = true;
+  btn.innerHTML = '&#8987;';
+  btn.style.color = '#f59e0b';
+  try {
+    const res = await fetch('/voices/refresh', { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    speakers = data.voices || [];
+    renderSpeakers();
+    if (data.updated) {
+      btn.innerHTML = '&#10003;';
+      btn.style.color = '#22c55e';
+      if (speakers.length && !selectedSpeaker) selectSpeaker(speakers[0].id);
+    } else {
+      btn.innerHTML = '&#8212;';
+      btn.style.color = '#888';
+    }
+  } catch (e) {
+    console.error('Failed to refresh voices:', e);
+    btn.innerHTML = '&#10007;';
+    btn.style.color = '#ef4444';
+  }
+  setTimeout(() => {
+    btn.disabled = false;
+    btn.innerHTML = '&#8635;';
+    btn.style.color = '#888';
+  }, 2000);
+}
+
+const SOURCE_LABELS = { internal: 'Internal', seiyuu: 'Seiyuu', 'common-voice': 'Common Voice', nexdata: 'Nexdata' };
+const collapsedGroups = new Set();
+
 function renderSpeakers() {
   const el = document.getElementById('speaker-list');
   el.innerHTML = '';
+
   if (activeInstruct) {
     const card = document.createElement('div');
     card.className = 'speaker-card selected';
@@ -302,15 +346,52 @@ function renderSpeakers() {
     card.onclick = () => { activeInstruct = null; renderSpeakers(); };
     el.appendChild(card);
   }
+
+  // Group by source
+  const groups = {};
   speakers.forEach(s => {
-    const card = document.createElement('div');
-    card.className = 'speaker-card' + (selectedSpeaker === s.id && !activeInstruct ? ' selected' : '');
-    card.innerHTML = `
-      <span class="name">${esc(s.name)}</span>
-      <div class="play-btn" onclick="event.stopPropagation();previewVoice('${s.id}')" title="Preview">&#9654;</div>
-    `;
-    card.onclick = () => selectSpeaker(s.id);
-    el.appendChild(card);
+    const src = s.source || 'other';
+    if (!groups[src]) groups[src] = [];
+    groups[src].push(s);
+  });
+
+  const sourceOrder = ['internal', 'seiyuu', 'common-voice', 'nexdata', 'other'];
+  const sortedSources = Object.keys(groups).sort((a, b) => {
+    const ia = sourceOrder.indexOf(a), ib = sourceOrder.indexOf(b);
+    if (ia !== -1 && ib !== -1) return ia - ib;
+    if (ia !== -1) return -1;
+    if (ib !== -1) return 1;
+    return a.localeCompare(b);
+  });
+
+  sortedSources.forEach(src => {
+    const items = groups[src];
+    const label = SOURCE_LABELS[src] || src;
+    const collapsed = collapsedGroups.has(src);
+
+    const header = document.createElement('div');
+    header.className = 'spk-group-header' + (collapsed ? ' collapsed' : '');
+    header.innerHTML = `<span class="label">${label}</span><span class="count">${items.length}</span><span class="arrow">&#9660;</span>`;
+    header.onclick = () => {
+      if (collapsedGroups.has(src)) collapsedGroups.delete(src);
+      else collapsedGroups.add(src);
+      renderSpeakers();
+    };
+    el.appendChild(header);
+
+    const body = document.createElement('div');
+    body.className = 'spk-group-body' + (collapsed ? ' collapsed' : '');
+    items.forEach(s => {
+      const card = document.createElement('div');
+      card.className = 'speaker-card' + (selectedSpeaker === s.id && !activeInstruct ? ' selected' : '');
+      card.innerHTML = `
+        <span class="name">${esc(s.name)}</span>
+        <div class="play-btn" onclick="event.stopPropagation();previewVoice('${s.id}')" title="Preview">&#9654;</div>
+      `;
+      card.onclick = () => selectSpeaker(s.id);
+      body.appendChild(card);
+    });
+    el.appendChild(body);
   });
 }
 
