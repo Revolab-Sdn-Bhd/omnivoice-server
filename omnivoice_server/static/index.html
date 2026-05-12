@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NadaV2 TTS</title>
+<title>RevoVoice</title>
 <script src="https://unpkg.com/wavesurfer.js@7"></script>
 <script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/spectrogram.min.js"></script>
 <style>
@@ -112,6 +112,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <div class="sidebar-body" id="speaker-list">
       <!-- populated by JS -->
     </div>
+    <div id="ref-text-display" style="padding:8px 12px;font-size:12px;color:#888;border-top:1px solid #333;max-height:60px;overflow-y:auto;display:none"></div>
     <div class="sidebar-footer">
       <div class="upload-btn" onclick="showDesignModal()" style="margin-bottom:8px">&#10022; Design Voice</div>
       <div class="upload-btn" onclick="showUploadModal()">+ Upload Speaker</div>
@@ -120,7 +121,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 
   <!-- Main Content -->
   <div class="main">
-    <h1>NadaV2 TTS</h1>
+    <h1>RevoVoice</h1>
     <p class="subtitle">Text-to-speech generation</p>
 
     <!-- Prompt Presets -->
@@ -149,10 +150,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
           <label>Target LUFS</label>
           <input type="number" id="param-lufs" value="-23" min="-60" max="0" step="1">
         </div>
-        <div class="param-group">
-          <label>Trim Front (s)</label>
-          <input type="number" id="param-trim" value="0.5" min="0" max="5" step="0.1">
-        </div>
       </div>
     </div>
 
@@ -162,6 +159,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
       <button class="generate-btn stream-btn" id="stream-btn" onclick="streamGenerate()" style="flex:1">Stream</button>
     </div>
     <div id="error-box"></div>
+    <div id="normalized-text" style="display:none;margin-top:8px;padding:8px 10px;background:#1a1a1a;border-radius:8px;font-size:13px;color:#8b8b8b;border:1px solid #2a2a2a">
+      <span style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:0.5px">Normalized</span>
+      <div id="normalized-text-content" style="margin-top:4px"></div>
+    </div>
 
     <!-- Stream Debug Panel -->
     <div id="stream-debug" style="display:none;margin-top:16px">
@@ -317,6 +318,18 @@ function selectSpeaker(id) {
   selectedSpeaker = id;
   activeInstruct = null;
   renderSpeakers();
+  // Show transcript
+  const s = speakers.find(v => v.id === id);
+  const el = document.getElementById('ref-text-display');
+  if (el) {
+    if (s && s.transcript) {
+      el.textContent = s.transcript;
+      el.style.display = 'block';
+    } else {
+      el.textContent = '';
+      el.style.display = 'none';
+    }
+  }
 }
 
 // ── Load quotes from GET /api/quotes ────────────────────────────────────────
@@ -374,15 +387,7 @@ function renderPresets() {
 // ── Preview voice (small generate call) ─────────────────────────────────────
 async function previewVoice(id) {
   try {
-    const res = await fetch('/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: 'Hello, this is a preview.', voice_ref_path: id, max_tokens: 200 }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
+    const audio = new Audio(`/voices/${encodeURIComponent(id)}/audio`);
     audio.play();
   } catch (e) {
     console.error('Preview failed:', e);
@@ -395,6 +400,7 @@ async function generate() {
   const errorBox = document.getElementById('error-box');
 
   errorBox.innerHTML = '';
+  document.getElementById('normalized-text').style.display = 'none';
   document.getElementById('stream-debug').style.display = 'none';
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Generating...';
@@ -404,13 +410,28 @@ async function generate() {
     if (!text) throw new Error('Please enter text or select a preset');
     if (!selectedSpeaker && !activeInstruct) throw new Error('Please select a speaker or design a voice');
 
+    // Normalize text for display (runs in parallel with generation)
+    const normEl = document.getElementById('normalized-text');
+    const normContent = document.getElementById('normalized-text-content');
+    const normPromise = fetch('/api/normalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    }).then(r => r.json()).then(data => {
+      if (data.normalized && data.normalized !== text) {
+        normContent.textContent = data.normalized;
+        normEl.style.display = 'block';
+      } else {
+        normEl.style.display = 'none';
+      }
+    }).catch(() => { normEl.style.display = 'none'; });
+
     const body = {
       text,
       voice_ref_path: selectedSpeaker || undefined,
       instruct: activeInstruct || undefined,
       temperature: _num('param-temp', 0.3),
       target_lufs: _num('param-lufs', -23),
-      trim_front_seconds: _num('param-trim', 0.5),
     };
 
     const response = await fetch('/generate', {
