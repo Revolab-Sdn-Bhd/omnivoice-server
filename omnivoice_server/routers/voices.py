@@ -32,6 +32,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _resolve_voices_dir(cfg) -> Path:
+    """Resolve the correct voices subdirectory from an HF snapshot path."""
+    hf_path = cfg.voices_dir
+    # Walk up to find the snapshot root (parent of dataset/ or data/)
+    if hf_path.name in ("dataset", "data"):
+        hf_path = hf_path.parent
+    if any((hf_path / "dataset").glob("*.wav")):
+        return hf_path / "dataset"
+    elif any((hf_path / "data").glob("*.wav")):
+        return hf_path / "data"
+    return hf_path
+
+
 def _get_cfg(request: Request):
     return request.app.state.cfg
 
@@ -49,6 +62,10 @@ def _load_voice_meta(voices_dir: Path, voice_id: str) -> dict:
         try:
             data = json.loads(json_path.read_text())
             meta["transcript"] = data.get("transcript", "")
+            meta["language_detected"] = data.get("language_detected", "")
+            meta["source"] = data.get("source", "")
+            if data.get("speaker_display_name"):
+                meta["display_name"] = data["speaker_display_name"].replace("_", " ").replace("-", " ")
             if "gender" in data and data["gender"]:
                 meta["gender"] = data["gender"]
             if "language" in data and data["language"]:
@@ -79,9 +96,11 @@ def _scan_voices(voices_dir: Path) -> list[dict]:
         meta = _load_voice_meta(voices_dir, stem)
         voices.append({
             "id": stem,
-            "name": meta.get("name", name),
+            "name": meta.get("display_name", meta.get("name", name)),
             "path": str(wav),
             "transcript": meta.get("transcript", ""),
+            "language_detected": meta.get("language_detected", ""),
+            "source": meta.get("source", ""),
             "gender": meta.get("gender"),
             "language": meta.get("language"),
             "description": meta.get("description"),
@@ -118,6 +137,44 @@ async def list_speakers(cfg=Depends(_get_cfg)):
     """Legacy alias for GET /voices. Returns speakers key instead of voices."""
     voices = _scan_voices(cfg.voices_dir)
     return {"speakers": voices}
+
+
+@router.post("/voices/refresh", tags=["Voices"])
+async def refresh_voices(request: Request):
+    """Re-check HuggingFace for new voices and update if changed."""
+    cfg = request.app.state.cfg
+    if not cfg.voices_hf_repo:
+        return {"voices": _scan_voices(cfg.voices_dir), "updated": False, "reason": "no_hf_repo"}
+
+    current_dir = str(cfg.voices_dir)
+
+    from huggingface_hub import snapshot_download
+    import asyncio
+
+    loop = asyncio.get_running_loop()
+    new_path = await loop.run_in_executor(
+        None, lambda: snapshot_download(cfg.voices_hf_repo, repo_type="dataset"),
+    )
+
+    new_voices_dir = _resolve_voices_dir_from_snapshot(Path(new_path))
+
+    if str(new_voices_dir) == current_dir:
+        voices = _scan_voices(cfg.voices_dir)
+        return {"voices": voices, "updated": False}
+
+    cfg.voices_dir = new_voices_dir
+    logger.info("Voices updated: %s -> %s", current_dir, new_voices_dir)
+    voices = _scan_voices(cfg.voices_dir)
+    return {"voices": voices, "updated": True}
+
+
+def _resolve_voices_dir_from_snapshot(hf_path: Path) -> Path:
+    """Pick the right subdirectory from an HF snapshot."""
+    if any((hf_path / "dataset").glob("*.wav")):
+        return hf_path / "dataset"
+    elif any((hf_path / "data").glob("*.wav")):
+        return hf_path / "data"
+    return hf_path
 
 
 # ── POST /voices ──────────────────────────────────────────────────────────────
