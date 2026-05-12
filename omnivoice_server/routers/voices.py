@@ -26,6 +26,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import FileResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -41,13 +42,31 @@ def _get_profiles(request: Request):
 
 def _load_voice_meta(voices_dir: Path, voice_id: str) -> dict:
     """Load companion metadata for a voice, or return empty dict."""
+    meta = {}
+    # Try companion .json (HF dataset format with transcript)
+    json_path = voices_dir / f"{voice_id}.json"
+    if json_path.exists():
+        try:
+            data = json.loads(json_path.read_text())
+            meta["transcript"] = data.get("transcript", "")
+            if "gender" in data and data["gender"]:
+                meta["gender"] = data["gender"]
+            if "language" in data and data["language"]:
+                meta["language"] = data["language"]
+            if "tags" in data and data["tags"]:
+                meta["tags"] = data["tags"]
+            if "duration" in data:
+                meta["duration"] = data["duration"]
+        except (json.JSONDecodeError, OSError):
+            logger.warning("Failed to parse JSON for voice '%s'", voice_id)
+    # Override with .meta.json if present (user uploads)
     meta_path = voices_dir / f"{voice_id}.meta.json"
     if meta_path.exists():
         try:
-            return json.loads(meta_path.read_text())
+            meta.update(json.loads(meta_path.read_text()))
         except (json.JSONDecodeError, OSError):
             logger.warning("Failed to parse metadata for voice '%s'", voice_id)
-    return {}
+    return meta
 
 
 def _scan_voices(voices_dir: Path) -> list[dict]:
@@ -62,28 +81,49 @@ def _scan_voices(voices_dir: Path) -> list[dict]:
             "id": stem,
             "name": meta.get("name", name),
             "path": str(wav),
+            "transcript": meta.get("transcript", ""),
             "gender": meta.get("gender"),
             "language": meta.get("language"),
             "description": meta.get("description"),
             "tags": meta.get("tags", []),
+            "duration": meta.get("duration"),
         })
     return voices
+
+
+# ── GET /voices/{voice_id}/audio ───────────────────────────────────────────────
+
+
+@router.get("/voices/{voice_id}/audio", tags=["Voices"])
+async def get_voice_audio(voice_id: str, cfg=Depends(_get_cfg)):
+    """Serve the original WAV audio file for a voice."""
+    wav_path = cfg.voices_dir / f"{voice_id}.wav"
+    if not wav_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Voice '{voice_id}' not found")
+    return FileResponse(str(wav_path), media_type="audio/wav")
 
 
 # ── GET /voices ────────────────────────────────────────────────────────────────
 
 
-@router.get("/voices")
+@router.get("/voices", tags=["Voices"])
 async def list_voices(cfg=Depends(_get_cfg)):
     """List all available voice WAV files from the voices/ directory."""
     voices = _scan_voices(cfg.voices_dir)
     return {"voices": voices}
 
 
+@router.get("/speakers", tags=["Voices"])
+async def list_speakers(cfg=Depends(_get_cfg)):
+    """Legacy alias for GET /voices. Returns speakers key instead of voices."""
+    voices = _scan_voices(cfg.voices_dir)
+    return {"speakers": voices}
+
+
 # ── POST /voices ──────────────────────────────────────────────────────────────
 
 
-@router.post("/voices", status_code=status.HTTP_201_CREATED)
+@router.post("/voices", status_code=status.HTTP_201_CREATED, tags=["Voices"])
 async def upload_voice(
     voice_name: str = Form(..., description="Name for the voice (alphanumeric, dash, underscore)"),
     ref_text: str = Form(..., min_length=1, description="Transcript of the reference audio"),
@@ -159,7 +199,7 @@ async def upload_voice(
 # ── Profile management (kept for OmniVoice clone support) ─────────────────────
 
 
-@router.post("/v1/voices/profiles", status_code=status.HTTP_201_CREATED)
+@router.post("/v1/voices/profiles", status_code=status.HTTP_201_CREATED, tags=["Voice Profiles"])
 async def create_profile(
     request: Request,
     profile_id: str = Form(
@@ -203,7 +243,7 @@ async def create_profile(
     return meta
 
 
-@router.get("/v1/voices/profiles/{profile_id}")
+@router.get("/v1/voices/profiles/{profile_id}", tags=["Voice Profiles"])
 async def get_profile(
     profile_id: str,
     profile_svc=Depends(_get_profiles),
@@ -219,7 +259,7 @@ async def get_profile(
     return profile
 
 
-@router.delete("/v1/voices/profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/v1/voices/profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Voice Profiles"])
 async def delete_profile(
     profile_id: str,
     profile_svc=Depends(_get_profiles),
@@ -236,7 +276,7 @@ async def delete_profile(
         )
 
 
-@router.patch("/v1/voices/profiles/{profile_id}", status_code=status.HTTP_200_OK)
+@router.patch("/v1/voices/profiles/{profile_id}", status_code=status.HTTP_200_OK, tags=["Voice Profiles"])
 async def update_profile(
     profile_id: str,
     request: Request,
