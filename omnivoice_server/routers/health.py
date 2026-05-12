@@ -28,4 +28,8 @@ async def health(request: Request):
         "status": "ok",
         "workers_healthy": workers_total,
         "workers_total": workers_total,
+        "model_id": request.app.state.cfg.model_id,
+        "model_revision": request.app.state.model_svc.model_revision_hash or None,
+        "voices_revision": request.app.state.cfg.voices_revision_hash or None,
+        "device": request.app.state.cfg.device,
     }

@@ -14,6 +14,18 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+
+def _resolve_hf_revision(repo_id: str, repo_type: str) -> str:
+    try:
+        from huggingface_hub import scan_cache_dir
+        for repo in scan_cache_dir().repos:
+            if repo.repo_id == repo_id and repo.repo_type == repo_type:
+                rev = next(iter(repo.revisions))
+                return rev.commit_hash[:8]
+    except Exception:
+        pass
+    return ""
+
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -47,6 +59,7 @@ async def lifespan(app: FastAPI):
         from huggingface_hub import snapshot_download
         logger.info("Downloading voices from %s...", cfg.voices_hf_repo)
         hf_cache = snapshot_download(cfg.voices_hf_repo, repo_type="dataset")
+        cfg.voices_revision_hash = _resolve_hf_revision(cfg.voices_hf_repo, "dataset")
         hf_path = Path(hf_cache)
         # HF repo structure may use "data/" or "dataset/"
         if (hf_path / "data" / "*.wav").exists() or any((hf_path / "data").glob("*.wav")):

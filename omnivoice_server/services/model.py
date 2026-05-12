@@ -28,6 +28,7 @@ class ModelService:
         self.cfg = cfg
         self._model = None
         self._loaded = False
+        self.model_revision_hash: str = ""
 
     async def load(self) -> None:
         """Load model in a thread (blocking op, must not block event loop)."""
@@ -86,6 +87,8 @@ class ModelService:
         # Apply post-load optimizations
         self._apply_optimizations()
 
+        self._resolve_revision_hash()
+
         self._loaded = True
 
     def _dtype_candidates(self) -> list:
@@ -106,6 +109,20 @@ class ModelService:
     @property
     def is_loaded(self) -> bool:
         return self._loaded
+
+    def _resolve_revision_hash(self) -> None:
+        """Resolve the loaded model's commit hash from the HF cache."""
+        try:
+            from huggingface_hub import scan_cache_dir
+            repo_id = self.cfg.model_id
+            cache = scan_cache_dir(self.cfg.model_cache_dir) if self.cfg.model_cache_dir else scan_cache_dir()
+            for repo in cache.repos:
+                if repo.repo_id == repo_id:
+                    rev = next(iter(repo.revisions))
+                    self.model_revision_hash = rev.commit_hash[:8]
+                    return
+        except Exception as e:
+            logger.debug(f"Could not resolve model revision hash: {e}")
 
     def _apply_optimizations(self) -> None:
         """Apply torch.compile and/or TorchAO quantization to the LLM backbone."""
