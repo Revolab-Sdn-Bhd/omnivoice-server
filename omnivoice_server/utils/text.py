@@ -9,7 +9,23 @@ Goal: Split text into chunks that:
 
 from __future__ import annotations
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
+
+
+def normalize_for_tts(text: str, language: str = "en") -> str:
+    """Normalize text for TTS using revo-norm (numbers, abbreviations, etc.)."""
+    try:
+        from revo_norm import normalize_text
+        return normalize_text(text, language=language)
+    except ImportError:
+        logger.debug("revo_norm not installed, skipping text normalization")
+        return text
+    except Exception:
+        logger.debug("Text normalization failed, using raw text", exc_info=True)
+        return text
 
 # Split at sentence boundaries: period/exclamation/question followed by space and capital letter
 # Also split at Chinese/Japanese sentence endings
