@@ -9,6 +9,7 @@ import asyncio
 import base64
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Literal
@@ -132,6 +133,9 @@ async def create_speech(
     cfg=Depends(_get_cfg),
 ):
     """Generate speech from text. Supports streaming via ?stream=true."""
+    client = request.client.host if request.client else "unknown"
+    t0 = time.monotonic()
+
     if len(body.input) > 10_000:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -146,9 +150,14 @@ async def create_speech(
             detail=f"Voice '{body.voice}' not found",
         )
 
+    logger.info(
+        "[speech] client=%s voice=%s stream=%s text=%r",
+        client, body.voice, stream, body.input,
+    )
+
     if stream:
         return StreamingResponse(
-            _stream_sse(body, inference_svc, metrics_svc, cfg),
+            _stream_sse(body, inference_svc, metrics_svc, cfg, client, t0),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -184,6 +193,12 @@ async def create_speech(
             detail=f"Synthesis failed: {e}",
         )
 
+    elapsed = time.monotonic() - t0
+    logger.info(
+        "[speech] client=%s voice=%s synthesis=%.3fs chars=%d",
+        client, body.voice, elapsed, len(body.input),
+    )
+
     if body.response_format == "wav":
         audio_bytes = tensors_to_wav_bytes(
             result.tensors, target_lufs=cfg.target_lufs,
@@ -202,6 +217,8 @@ async def _stream_sse(
     inference_svc: InferenceService,
     metrics_svc: MetricsService,
     cfg,
+    client: str,
+    t0: float,
 ) -> AsyncIterator[str]:
     """SSE generator for streaming TTS."""
     from ..utils.text import split_sentences
@@ -220,8 +237,12 @@ async def _stream_sse(
 
     base_req = _build_synthesis_req(body, cfg)
     chunk_index = 0
+    ttfc_logged = False
 
-    for sentence in sentences:
+    for i, sentence in enumerate(sentences):
+        logger.info("[speech] client=%s voice=%s sentence[%d] %r", client, body.voice, i, sentence)
+        t_sent = time.monotonic()
+
         syn_req = SynthesisRequest(
             text=normalize_for_tts(sentence, language=body.language),
             mode=base_req.mode,
@@ -236,23 +257,28 @@ async def _stream_sse(
             metrics_svc.record_success(result.latency_s)
         except asyncio.TimeoutError:
             metrics_svc.record_timeout()
-            error_event = json.dumps({
-                "error": "Streaming chunk timed out",
-                "is_final": True,
-            })
+            error_event = json.dumps({"error": "Streaming chunk timed out", "is_final": True})
             yield f"data: {error_event}\n\n"
             return
         except Exception:
             metrics_svc.record_error()
             logger.exception("Streaming chunk failed")
-            error_event = json.dumps({
-                "error": "Streaming chunk failed",
-                "is_final": True,
-            })
+            error_event = json.dumps({"error": "Streaming chunk failed", "is_final": True})
             yield f"data: {error_event}\n\n"
             return
 
+        logger.info(
+            "[speech] client=%s voice=%s sentence[%d] synthesis=%.3fs",
+            client, body.voice, i, time.monotonic() - t_sent,
+        )
+
         for tensor in result.tensors:
+            if not ttfc_logged:
+                logger.info(
+                    "[speech] client=%s voice=%s ttfc=%.3fs",
+                    client, body.voice, time.monotonic() - t0,
+                )
+                ttfc_logged = True
             audio_b64 = _tensor_to_base64_float32(tensor)
             event = json.dumps({
                 "chunk_index": chunk_index,
@@ -264,6 +290,10 @@ async def _stream_sse(
             yield f"data: {event}\n\n"
             chunk_index += 1
 
+    logger.info(
+        "[speech] client=%s voice=%s total=%.3fs chunks=%d",
+        client, body.voice, time.monotonic() - t0, chunk_index,
+    )
     final_event = json.dumps({
         "chunk_index": chunk_index,
         "audio": "",
