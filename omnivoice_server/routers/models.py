@@ -9,17 +9,17 @@ router = APIRouter()
 MODEL_CREATED = 1714800000
 
 
-@router.get("/models")
+@router.get("/models", tags=["OpenAI-compatible"])
 async def list_models():
     """Returns the single model this server provides."""
     return {
         "object": "list",
         "data": [
             {
-                "id": "sepbox-tts",
+                "id": "revovoice",
                 "object": "model",
                 "created": MODEL_CREATED,
-                "owned_by": "sepbox",
+                "owned_by": "revolab",
             },
         ],
     }
