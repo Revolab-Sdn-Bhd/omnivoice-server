@@ -51,6 +51,8 @@ class ModelService:
                 }
                 if self.cfg.model_cache_dir is not None:
                     from_pretrained_kwargs["cache_dir"] = str(self.cfg.model_cache_dir)
+                if self.cfg.model_revision:
+                    from_pretrained_kwargs["revision"] = self.cfg.model_revision
                 model = OmniVoice.from_pretrained(
                     self.cfg.model_id,
                     **from_pretrained_kwargs,

@@ -185,6 +185,12 @@ def main() -> None:
         dest="model_cache_dir",
         help="Override HuggingFace model cache dir (env: OMNIVOICE_MODEL_CACHE_DIR)",
     )
+    parser.add_argument(
+        "--model-revision",
+        default=None,
+        dest="model_revision",
+        help="Git revision (branch, tag, commit) to load from HuggingFace",
+    )
 
     # Batching
     parser.add_argument(
