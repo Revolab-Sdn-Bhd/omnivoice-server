@@ -19,7 +19,8 @@ def normalize_for_tts(text: str, language: str = "en") -> str:
     """Normalize text for TTS using revo-norm (numbers, abbreviations, etc.)."""
     try:
         from revo_norm import normalize_text
-        return normalize_text(text, language=language)
+        norm_lang = "ms" if language in ("ms", "mixed") else "en"
+        return normalize_text(text, language=norm_lang)
     except ImportError:
         logger.debug("revo_norm not installed, skipping text normalization")
         return text

@@ -44,6 +44,7 @@ class OpenAISpeechRequest(BaseModel):
     min_p: float = Field(default=0.05, ge=0.0, le=1.0)
     max_tokens: int = Field(default=1000, ge=1)
     chunk_size: int = Field(default=0, ge=0)
+    language: str = Field(default="en", pattern=r"^(en|ms|mixed)$")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -81,7 +82,7 @@ def _build_synthesis_req(body: OpenAISpeechRequest, cfg) -> SynthesisRequest:
         mode = "design"
 
     return SynthesisRequest(
-        text=normalize_for_tts(body.input),
+        text=normalize_for_tts(body.input, language=body.language),
         mode=mode,
         ref_audio_path=audio_path,
         ref_text=ref_text,
@@ -222,7 +223,7 @@ async def _stream_sse(
 
     for sentence in sentences:
         syn_req = SynthesisRequest(
-            text=sentence,
+            text=normalize_for_tts(sentence, language=body.language),
             mode=base_req.mode,
             ref_audio_path=base_req.ref_audio_path,
             ref_text=base_req.ref_text,
