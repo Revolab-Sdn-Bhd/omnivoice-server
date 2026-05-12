@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 router = APIRouter()
 
 
-@router.get("/health")
+@router.get("/health", tags=["Health"])
 async def health(request: Request):
     """Server health check — verifies model is loaded."""
     model_svc = request.app.state.model_svc
