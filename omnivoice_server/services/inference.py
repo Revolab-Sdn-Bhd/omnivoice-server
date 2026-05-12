@@ -210,7 +210,7 @@ class OmniVoiceAdapter:
             )
             minimal = {
                 "text": kwargs["text"],
-                "num_step": kwargs.get("num_step", 16),
+                "num_step": kwargs.get("num_step", 10),
             }
             if "instruct" in kwargs:
                 minimal["instruct"] = kwargs["instruct"]
@@ -481,9 +481,16 @@ class InferenceService:
         )
 
 
+_cleanup_counter = 0
+_CLEANUP_INTERVAL = 10
+
+
 def _cleanup_memory(device: str) -> None:
-    """Post-inference memory cleanup to mitigate potential Torch memory growth."""
-    gc.collect()
+    """Post-inference memory cleanup. Runs gc.collect every N requests."""
+    global _cleanup_counter
+    _cleanup_counter += 1
+    if _cleanup_counter % _CLEANUP_INTERVAL == 0:
+        gc.collect()
     if device == "cuda":
         try:
             torch.cuda.empty_cache()

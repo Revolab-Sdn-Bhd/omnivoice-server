@@ -42,7 +42,7 @@ class Settings(BaseSettings):
         description="Override HuggingFace model cache directory",
     )
     device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
-    num_step: int = Field(default=16, ge=8, le=32)
+    num_step: int = Field(default=10, ge=2, le=32)
 
     # Optimization
     compile_mode: Literal["none", "default", "reduce-overhead", "max-autotune"] = Field(
@@ -166,6 +166,10 @@ class Settings(BaseSettings):
     voices_dir: Path = Field(
         default=Path("omnivoice_server/static/speakers"),
         description="Local directory for voice WAV files (auto-populated from HF if empty)",
+    )
+    voices_revision_hash: str = Field(
+        default="",
+        description="Resolved HF commit hash for voices dataset (set at startup)",
     )
 
     # Audio post-processing
