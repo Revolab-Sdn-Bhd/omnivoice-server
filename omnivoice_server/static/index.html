@@ -47,18 +47,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 /* Prompt presets */
 .section{margin-bottom:20px}
 .section-label{font-size:12px;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
-.preset-list{display:flex;flex-direction:column;gap:6px;height:240px;overflow-y:auto}
-.cat-group{margin-bottom:4px}
-.cat-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:#141414;border:1px solid #222;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.5px;transition:all .15s;user-select:none}
-.cat-header:hover{border-color:#3b82f6;color:#bbb}
-.cat-header .arrow{transition:transform .2s;font-size:10px}
-.cat-header.open .arrow{transform:rotate(90deg)}
-.cat-items{display:none;padding:4px 0 0 0}
-.cat-items.open{display:flex;flex-direction:column;gap:4px}
-.preset-row{background:#141414;border:1px solid #222;border-radius:8px;padding:10px 14px;cursor:pointer;transition:all .15s;font-size:13px;color:#aaa;margin-left:8px}
-.preset-row:hover{border-color:#3b82f6;color:#ddd}
-.preset-row.selected{border-color:#3b82f6;background:#1a1a2a;color:#fff}
-.preset-row .preset-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.preset-list{display:flex;flex-direction:column;gap:12px;max-height:260px;overflow-y:auto;padding-right:4px}
+.preset-group{}
+.preset-cat{font-size:11px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.preset-chips{display:flex;flex-wrap:wrap;gap:6px}
+.preset-chip{background:#141414;border:1px solid #222;border-radius:20px;padding:6px 14px;cursor:pointer;transition:all .15s;font-size:12px;color:#999;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+.preset-chip:hover{border-color:#3b82f6;color:#ddd;background:#1a1a2a}
+.preset-chip.selected{border-color:#3b82f6;background:#1a2040;color:#fff}
 
 /* Text input */
 .text-input{width:100%;background:#141414;border:1px solid #222;border-radius:10px;color:#e5e5e5;padding:14px 16px;font-size:14px;font-family:inherit;resize:vertical;min-height:100px;max-height:300px}
@@ -71,6 +66,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .param-group label{display:block;font-size:11px;color:#666;margin-bottom:6px;text-transform:uppercase;letter-spacing:.3px}
 .param-group input,.param-group select{width:100%;background:#141414;border:1px solid #222;border-radius:8px;color:#e5e5e5;padding:10px 12px;font-size:13px;font-family:inherit}
 .param-group input:focus,.param-group select:focus{outline:none;border-color:#3b82f6}
+.param-group input[type=range]{-webkit-appearance:none;appearance:none;border:none;padding:0;height:6px;border-radius:3px;background:#252525}
+.param-group input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:#3b82f6;cursor:pointer}
 .param-group select option{background:#141414;color:#e5e5e5}
 
 /* Generate button */
@@ -116,7 +113,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <!-- Sidebar: Speakers -->
   <div class="sidebar">
     <div class="sidebar-header">
-      <h2>Speakers</h2>
+      <h2>Speakers <span id="voices-rev" style="color:#444;font-size:10px;font-weight:normal"></span></h2>
       <button onclick="refreshVoices(this)" title="Refresh speakers from HuggingFace" style="background:none;border:1px solid #333;color:#888;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:14px">&#8635;</button>
     </div>
     <div class="sidebar-body" id="speaker-list">
@@ -132,7 +129,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <!-- Main Content -->
   <div class="main">
     <h1>RevoVoice</h1>
-    <p class="subtitle">Text-to-speech generation</p>
+    <p class="subtitle">Text-to-speech generation <span id="model-rev" style="color:#444;font-size:11px;margin-left:6px"></span></p>
 
     <!-- Prompt Presets -->
     <div class="section">
@@ -145,7 +142,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <!-- Text Input -->
     <div class="section">
       <div class="section-label">Text to Synthesize</div>
-      <textarea class="text-input" id="text-input" placeholder="Enter text or select a preset above..."></textarea>
+      <textarea class="text-input" id="text-input" placeholder="Enter text or select a preset above..." oninput="debounceEstimate()"></textarea>
     </div>
 
     <!-- Generation Params -->
@@ -159,6 +156,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
         <div class="param-group">
           <label>Target LUFS</label>
           <input type="number" id="param-lufs" value="-23" min="-60" max="0" step="1">
+        </div>
+        <div class="param-group">
+          <label>Speed Mode</label>
+          <select id="param-speed-mode">
+            <option value="turbo">Turbo (4 steps)</option>
+            <option value="fast" selected>Fast (10 steps)</option>
+            <option value="normal">Normal (16 steps)</option>
+            <option value="quality">Quality (32 steps)</option>
+          </select>
+        </div>
+        <div class="param-group">
+          <label>Duration Override</label>
+          <div style="display:flex;align-items:center;gap:8px">
+            <input type="range" id="param-duration" min="0.5" max="20" step="0.1" value="0" style="flex:1;display:none">
+            <span id="param-duration-label" style="font-size:12px;color:#666;min-width:60px">Auto</span>
+          </div>
+          <div id="duration-estimate" style="font-size:11px;color:#555;margin-top:4px"></div>
         </div>
       </div>
     </div>
@@ -191,6 +205,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
       <div style="display:flex;align-items:center;gap:12px;margin-top:10px;font-size:12px;color:#888">
         <button id="play-btn" onclick="togglePlay()" style="width:36px;height:36px;border-radius:50%;background:#3b82f6;border:none;color:#fff;font-size:16px;cursor:pointer;flex-shrink:0">&#9654;</button>
         <span id="audio-meta"></span>
+        <div id="audio-meta-note" style="display:none;font-size:11px;color:#555;margin-top:2px"></div>
         <span style="margin-left:auto">
           <a id="download-link" style="color:#3b82f6;text-decoration:none" download="speech.wav">Download</a>
           <a id="save-speaker-link" style="display:none;cursor:pointer;color:#3b82f6;text-decoration:none;margin-left:10px" onclick="saveAsSpeaker()">Save as Speaker</a>
@@ -284,7 +299,22 @@ let wavesurfer = null;
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
-  await Promise.all([loadSpeakers(), loadQuotes()]);
+  await Promise.all([loadSpeakers(), loadQuotes(), loadModelInfo()]);
+}
+
+async function loadModelInfo() {
+  try {
+    const res = await fetch('/health');
+    const data = await res.json();
+    const el = document.getElementById('model-rev');
+    if (data.model_revision) {
+      el.textContent = `${data.model_id} @ ${data.model_revision}`;
+    }
+    const vel = document.getElementById('voices-rev');
+    if (data.voices_revision) {
+      vel.textContent = `@ ${data.voices_revision}`;
+    }
+  } catch(e) {}
 }
 
 // ── Load speakers from GET /voices ──────────────────────────────────────────
@@ -411,6 +441,7 @@ function selectSpeaker(id) {
       el.style.display = 'none';
     }
   }
+  estimateDuration();
 }
 
 // ── Load quotes from GET /api/quotes ────────────────────────────────────────
@@ -434,33 +465,29 @@ function renderPresets() {
     const items = categories[cat];
     if (!items || !items.length) return;
     const group = document.createElement('div');
-    group.className = 'cat-group';
+    group.className = 'preset-group';
 
-    const header = document.createElement('div');
-    header.className = 'cat-header';
-    header.innerHTML = `<span>${esc(cat)}</span><span class="arrow">&#9654;</span>`;
-    header.onclick = () => {
-      header.classList.toggle('open');
-      itemsEl.classList.toggle('open');
-    };
+    const label = document.createElement('div');
+    label.className = 'preset-cat';
+    label.textContent = cat;
 
-    const itemsEl = document.createElement('div');
-    itemsEl.className = 'cat-items';
+    const chips = document.createElement('div');
+    chips.className = 'preset-chips';
     items.forEach(q => {
-      const row = document.createElement('div');
-      row.className = 'preset-row';
-      row.textContent = q;
-      row.onclick = (e) => {
-        e.stopPropagation();
+      const chip = document.createElement('span');
+      chip.className = 'preset-chip';
+      chip.textContent = q;
+      chip.title = q;
+      chip.onclick = () => {
         document.getElementById('text-input').value = q;
-        el.querySelectorAll('.preset-row').forEach(r => r.classList.remove('selected'));
-        row.classList.add('selected');
+        el.querySelectorAll('.preset-chip').forEach(c => c.classList.remove('selected'));
+        chip.classList.add('selected');
       };
-      itemsEl.appendChild(row);
+      chips.appendChild(chip);
     });
 
-    group.appendChild(header);
-    group.appendChild(itemsEl);
+    group.appendChild(label);
+    group.appendChild(chips);
     el.appendChild(group);
   });
 }
@@ -497,7 +524,7 @@ async function generate() {
     const normPromise = fetch('/api/normalize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, language: _detectLang() }),
     }).then(r => r.json()).then(data => {
       if (data.normalized && data.normalized !== text) {
         normContent.textContent = data.normalized;
@@ -511,10 +538,14 @@ async function generate() {
       text,
       voice_ref_path: selectedSpeaker || undefined,
       instruct: activeInstruct || undefined,
+      language: _detectLang(),
       temperature: _num('param-temp', 0.3),
       target_lufs: _num('param-lufs', -23),
+      duration: _getDuration(),
+      ..._speedModeParams(),
     };
 
+    const t0 = performance.now();
     const response = await fetch('/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -528,6 +559,9 @@ async function generate() {
     }
 
     const blob = await response.blob();
+    const latencyMs = performance.now() - t0;
+    const serverLatency = parseFloat(response.headers.get('X-Latency-S')) || null;
+    const serverRTF = parseFloat(response.headers.get('X-RTF')) || null;
     lastGeneratedBlob = blob;
     lastWasDesign = !!activeInstruct;
     const url = URL.createObjectURL(blob);
@@ -535,7 +569,7 @@ async function generate() {
 
     document.getElementById('audio-viz').style.display = 'block';
     document.getElementById('save-speaker-link').style.display = lastWasDesign ? 'inline' : 'none';
-    _initWavesurfer(blob);
+    _initWavesurfer(blob, latencyMs, serverLatency, serverRTF);
   } catch (e) {
     errorBox.innerHTML = `<div class="error">${esc(e.message)}</div>`;
   } finally {
@@ -786,9 +820,106 @@ function _num(id, fallback) {
   const v = parseFloat(document.getElementById(id).value);
   return isFinite(v) ? v : fallback;
 }
+function _speedModeParams() {
+  const mode = document.getElementById('param-speed-mode').value;
+  if (mode === 'turbo') return { num_step: 4 };
+  if (mode === 'fast') return { num_step: 10 };
+  if (mode === 'normal') return { num_step: 16 };
+  return { num_step: 32 };
+}
+function _detectLang() {
+  const s = speakers.find(v => v.id === selectedSpeaker);
+  const ld = s && s.language_detected;
+  if (ld === 'ms') return 'ms';
+  if (ld === 'ja') return 'en';
+  return 'en';
+}
+
+let estimatedDurationS = 0;
+
+async function estimateDuration() {
+  const text = document.getElementById('text-input').value.trim();
+  const estEl = document.getElementById('duration-estimate');
+  const slider = document.getElementById('param-duration');
+  const label = document.getElementById('param-duration-label');
+
+  if (!text || !selectedSpeaker) {
+    estEl.textContent = '';
+    slider.style.display = 'none';
+    label.textContent = 'Auto';
+    estimatedDurationS = 0;
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/estimate-duration', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice_id: selectedSpeaker }),
+    });
+    const data = await res.json();
+    estimatedDurationS = data.estimated_duration_s;
+
+    if (estimatedDurationS > 0) {
+      const frames = data.estimated_frames;
+      const refDur = data.ref_duration_s;
+      const f = data.formula;
+      let html = `~${estimatedDurationS.toFixed(1)}s (${frames} frames) · ref: ${refDur.toFixed(1)}s`;
+      if (f) {
+        html += `<br><span style="color:#444;font-size:10px">frames: ${f.est_frames} → ${f.est_duration}</span>`;
+      }
+      estEl.innerHTML = html;
+      const prevVal = parseFloat(slider.value);
+      const wasCustom = prevVal > 0 && slider.style.display !== 'none';
+      slider.min = Math.max(0.5, estimatedDurationS * 0.5);
+      slider.max = Math.min(20, estimatedDurationS * 2);
+      slider.step = 0.1;
+      if (!wasCustom) {
+        slider.value = 0;
+        label.textContent = 'Auto';
+      } else if (prevVal < parseFloat(slider.min) || prevVal > parseFloat(slider.max)) {
+        slider.value = Math.max(parseFloat(slider.min), Math.min(parseFloat(slider.max), prevVal));
+        label.textContent = parseFloat(slider.value).toFixed(1) + 's';
+      }
+      slider.style.display = 'block';
+    } else {
+      estEl.textContent = '';
+      slider.style.display = 'none';
+    }
+  } catch (e) {
+    estEl.textContent = '';
+  }
+}
+
+function _getDuration() {
+  const slider = document.getElementById('param-duration');
+  const label = document.getElementById('param-duration-label');
+  const val = parseFloat(slider.value);
+  if (val > 0 && slider.style.display !== 'none') return val;
+  return undefined;
+}
+
+let _estTimer = null;
+function debounceEstimate() {
+  clearTimeout(_estTimer);
+  _estTimer = setTimeout(estimateDuration, 400);
+}
+
+// Duration slider handler
+document.getElementById('param-duration').addEventListener('input', function() {
+  const label = document.getElementById('param-duration-label');
+  const val = parseFloat(this.value);
+  if (val > 0) {
+    label.textContent = val.toFixed(1) + 's';
+    label.style.color = '#3b82f6';
+  } else {
+    label.textContent = 'Auto';
+    label.style.color = '#666';
+  }
+});
 
 // ── Spectrogram ────────────────────────────────────────────────────────────
-function _initWavesurfer(blob) {
+function _initWavesurfer(blob, latencyMs, serverLatency, serverRTF) {
   if (wavesurfer) wavesurfer.destroy();
   const url = URL.createObjectURL(blob);
   wavesurfer = WaveSurfer.create({
@@ -812,7 +943,23 @@ function _initWavesurfer(blob) {
   wavesurfer.on('ready', () => {
     const dur = wavesurfer.getDuration();
     const sizeKB = (blob.size / 1024).toFixed(0);
-    document.getElementById('audio-meta').textContent = `${dur.toFixed(1)}s · ${sizeKB} KB · WAV`;
+    let meta = `${dur.toFixed(1)}s · ${sizeKB} KB`;
+    if (serverLatency != null) {
+      meta += ` · model ${(serverLatency * 1000).toFixed(0)}ms`;
+      if (serverRTF != null) meta += ` (${serverRTF.toFixed(2)}x RTF)`;
+    }
+    if (latencyMs != null) {
+      meta += ` · total ${(latencyMs).toFixed(0)}ms`;
+    }
+    document.getElementById('audio-meta').textContent = meta;
+    const metaNote = document.getElementById('audio-meta-note');
+    if (metaNote) {
+      let note = '';
+      if (serverLatency != null) note += 'model = inference only. ';
+      if (latencyMs != null) note += 'total = model + norm + encode + HTTP.';
+      metaNote.textContent = note;
+      metaNote.style.display = note ? 'block' : 'none';
+    }
     wavesurfer.play();
   });
   wavesurfer.on('play', () => {
