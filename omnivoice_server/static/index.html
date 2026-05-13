@@ -883,6 +883,7 @@ async function estimateDuration() {
       slider.max = Math.min(20, estimatedDurationS * 2);
       slider.step = 0.1;
       if (!wasCustom) {
+        slider.min = 0;
         slider.value = 0;
         label.textContent = 'Auto';
       } else if (prevVal < parseFloat(slider.min) || prevVal > parseFloat(slider.max)) {
