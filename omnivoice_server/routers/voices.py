@@ -32,6 +32,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _get_voices_rev(cfg) -> str:
+    """Resolve current HF commit hash for the voices dataset."""
+    try:
+        from huggingface_hub import scan_cache_dir
+        for repo in scan_cache_dir().repos:
+            if repo.repo_id == cfg.voices_hf_repo and repo.repo_type == "dataset":
+                return next(iter(repo.revisions)).commit_hash[:8]
+    except Exception:
+        pass
+    return ""
+
+
 def _resolve_voices_dir(cfg) -> Path:
     """Resolve the correct voices subdirectory from an HF snapshot path."""
     hf_path = cfg.voices_dir
@@ -163,6 +175,8 @@ async def refresh_voices(request: Request):
     )
 
     new_voices_dir = _resolve_voices_dir_from_snapshot(Path(new_path))
+
+    cfg.voices_revision_hash = _get_voices_rev(cfg)
 
     if str(new_voices_dir) == current_dir:
         voices = _scan_voices(cfg.voices_dir)

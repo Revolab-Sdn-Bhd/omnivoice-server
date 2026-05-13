@@ -342,6 +342,7 @@ async function refreshVoices(btn) {
     const data = await res.json();
     speakers = data.voices || [];
     renderSpeakers();
+    loadModelInfo();
     if (data.updated) {
       btn.innerHTML = '&#10003;';
       btn.style.color = '#22c55e';
