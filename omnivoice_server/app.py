@@ -429,6 +429,8 @@ def create_app(cfg: Settings) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     async def frontend():
-        return (static_dir / "index.html").read_text()
+        from starlette.responses import HTMLResponse as HR
+        content = (static_dir / "index.html").read_text()
+        return HR(content=content, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
     return app
