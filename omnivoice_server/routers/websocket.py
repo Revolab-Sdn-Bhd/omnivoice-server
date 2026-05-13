@@ -115,6 +115,7 @@ async def tts_websocket(ws: WebSocket):
             transcript = msg.get("transcript", "")
             cont = msg.get("continue", True)
             language = msg.get("language", "en")
+            num_step = msg.get("num_step")
             voice_cfg = msg.get("voice", {})
             voice_id = voice_cfg.get("id", "anwar") if isinstance(voice_cfg, dict) else "anwar"
 
@@ -139,6 +140,7 @@ async def tts_websocket(ws: WebSocket):
                 _process_transcript(
                     ws, msg, ctx_id, transcript, language, voice_id,
                     cancelled_contexts, active_tasks, t0, preceding,
+                    num_step,
                 )
             )
             active_tasks.setdefault(ctx_id, []).append(task)
@@ -181,6 +183,7 @@ async def _process_transcript(
     active_tasks: dict[str, list[asyncio.Task]],
     t0: float,
     preceding: list[asyncio.Task],
+    num_step: int | None = None,
 ) -> None:
     """Process a single transcript message: split sentences, synthesize, stream."""
     import numpy as np
@@ -211,6 +214,7 @@ async def _process_transcript(
             ref_text=ref_text,
             speed=1.0,
             language=language if language != "en" else None,
+            num_step=num_step,
         )
 
         try:
