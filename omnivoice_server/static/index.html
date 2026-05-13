@@ -433,6 +433,7 @@ function selectSpeaker(id) {
   // Reset duration slider to Auto on speaker change
   const slider = document.getElementById('param-duration');
   const label = document.getElementById('param-duration-label');
+  slider.min = 0;
   slider.value = 0;
   label.textContent = 'Auto';
   label.style.color = '#666';
