@@ -219,7 +219,7 @@ class OmniVoiceAdapter:
             )
             minimal = {
                 "text": kwargs["text"],
-                "num_step": kwargs.get("num_step", 32),
+                "num_step": kwargs.get("num_step", 16),
             }
             if "instruct" in kwargs:
                 minimal["instruct"] = kwargs["instruct"]

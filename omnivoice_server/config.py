@@ -42,7 +42,7 @@ class Settings(BaseSettings):
         description="Override HuggingFace model cache directory",
     )
     device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
-    num_step: int = Field(default=32, ge=1, le=64)
+    num_step: int = Field(default=16, ge=1, le=64)
 
     # Optimization
     compile_mode: Literal["none", "default", "reduce-overhead", "max-autotune"] = Field(
