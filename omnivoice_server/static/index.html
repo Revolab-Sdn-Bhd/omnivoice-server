@@ -430,6 +430,12 @@ function selectSpeaker(id) {
   selectedSpeaker = id;
   activeInstruct = null;
   renderSpeakers();
+  // Reset duration slider to Auto on speaker change
+  const slider = document.getElementById('param-duration');
+  const label = document.getElementById('param-duration-label');
+  slider.value = 0;
+  label.textContent = 'Auto';
+  label.style.color = '#666';
   // Show transcript
   const s = speakers.find(v => v.id === id);
   const el = document.getElementById('ref-text-display');
