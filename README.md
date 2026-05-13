@@ -157,7 +157,7 @@ All settings via env vars (`OMNIVOICE_` prefix) or CLI flags.
 | `OMNIVOICE_DEVICE` | `auto` | `auto`, `cuda`, `mps`, `cpu` |
 | `OMNIVOICE_MODEL_ID` | `Revolab/omnivoice` | HuggingFace repo or local path |
 | `OMNIVOICE_MODEL_REVISION` | `""` | Git revision to load from HuggingFace |
-| `OMNIVOICE_NUM_STEP` | `10` | Diffusion steps (2–32) |
+| `OMNIVOICE_NUM_STEP` | `32` | Diffusion steps (1–64) |
 | `OMNIVOICE_MAX_CONCURRENT` | `2` | Parallel inference slots |
 | `OMNIVOICE_WORKERS` | `1` | Worker processes (multi-GPU) |
 | `OMNIVOICE_API_KEY` | `""` | Bearer token (empty = no auth) |

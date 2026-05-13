@@ -196,8 +196,11 @@ class TTSRequest(BaseModel):
     min_p: float = Field(default=0.05, ge=0.0, le=1.0)
     max_tokens: int = Field(default=1000, ge=1)
     num_step: int | None = Field(default=None, ge=2, le=32)
-    t_schedule_mode: str | None = Field(default=None, description="linear or sway")
-    sway_coeff: float | None = Field(default=None, description="sway coefficient (default -1.0)")
+    layer_penalty_factor: float | None = Field(default=None)
+    preprocess_prompt: bool | None = Field(default=None)
+    postprocess_output: bool | None = Field(default=None)
+    audio_chunk_duration: float | None = Field(default=None)
+    audio_chunk_threshold: float | None = Field(default=None)
     target_lufs: float = Field(default=-23.0, ge=-60.0, le=0.0)
     duration: float | None = Field(
         default=None, ge=0.1, le=60.0,
@@ -291,8 +294,11 @@ def _build_synthesis_req(body: TTSRequest, cfg) -> SynthesisRequest:
         num_step=body.num_step,
         language=body.language if body.language != "en" else None,
         class_temperature=body.temperature if body.temperature != 0.3 else None,
-        t_schedule_mode=body.t_schedule_mode,
-        sway_coeff=body.sway_coeff,
+        layer_penalty_factor=body.layer_penalty_factor,
+        preprocess_prompt=body.preprocess_prompt,
+        postprocess_output=body.postprocess_output,
+        audio_chunk_duration=body.audio_chunk_duration,
+        audio_chunk_threshold=body.audio_chunk_threshold,
     )
 
 
