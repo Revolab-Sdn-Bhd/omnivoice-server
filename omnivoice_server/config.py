@@ -34,7 +34,8 @@ class Settings(BaseSettings):
         description="HuggingFace repo ID or local path",
     )
     model_revision: str = Field(
-        default="",
+        # default="",
+        default="1f6f0e5cddca87e4f69cd3a32fbcd843f63148ac",
         description="Git revision (branch, tag, commit) to load from HuggingFace",
     )
     model_cache_dir: Path | None = Field(
@@ -42,7 +43,12 @@ class Settings(BaseSettings):
         description="Override HuggingFace model cache directory",
     )
     device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
-    num_step: int = Field(default=16, ge=1, le=64)
+    num_step: int = Field(
+        default=32,
+        ge=1,
+        le=64,
+        description="Iterative decoding steps. Higher = better quality, slower. 16=fast, 32=balanced, 64=max quality.",
+    )
 
     # Optimization
     compile_mode: Literal["none", "default", "reduce-overhead", "max-autotune"] = Field(
@@ -88,7 +94,7 @@ class Settings(BaseSettings):
         description="Noise schedule shift. Affects quality/speed tradeoff.",
     )
     position_temperature: float = Field(
-        default=5.0,
+        default=2.0,
         ge=0.0,
         le=10.0,
         description=(
