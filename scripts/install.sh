@@ -124,17 +124,16 @@ if [ "$TORCH_INDEX" != "cpu" ]; then
     PYTORCH_URL="https://download.pytorch.org/whl/$TORCH_INDEX"
     echo "→ Installing torch+$TORCH_INDEX from $PYTORCH_URL"
 
-    # Pin torch to a known-good version range to avoid bleeding-edge breakage
-    uv pip install \
-        "torch>=2.5.0" \
-        "torchaudio>=2.5.0" \
-        --index-url "$PYTORCH_URL" \
-        --reinstall-package torch \
-        --reinstall-package torchaudio
+    # Force reinstall torch+torchaudio from the correct CUDA index
+    # Must uninstall first to handle downgrades (cu130 → cu126)
+    echo "→ Uninstalling stale torch packages..."
+    uv pip uninstall -y torch torchaudio torchcodec 2>/dev/null || true
+
+    echo "→ Installing torch+$TORCH_INDEX from $PYTORCH_URL"
+    uv pip install torch torchaudio --index-url "$PYTORCH_URL"
 
     # torchcodec: install from PyPI (avoids cu130 missing lib issues)
-    # then reinstall only torch/torchaudio from CUDA index
-    uv pip install "torchcodec>=0.1.0" --reinstall-package torchcodec
+    uv pip install "torchcodec>=0.1.0"
 fi
 
 # ── Verify ────────────────────────────────────────────────────────────────────
