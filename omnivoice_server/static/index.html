@@ -807,6 +807,7 @@ async function streamGenerate() {
   errorBox.innerHTML = '';
   log.innerHTML = '';
   stats.textContent = '';
+  document.getElementById('normalized-text').style.display = 'none';
   debugPanel.style.display = 'block';
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Streaming...';
@@ -815,6 +816,21 @@ async function streamGenerate() {
     const text = document.getElementById('text-input').value.trim();
     if (!text) throw new Error('Please enter text or select a preset');
     if (!selectedSpeaker && !activeInstruct) throw new Error('Please select a speaker or design a voice');
+
+    // Show normalized text
+    const p = _collectParams(text);
+    fetch('/api/normalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, language: p.lang }),
+    }).then(r => r.json()).then(data => {
+      const normEl = document.getElementById('normalized-text');
+      const normContent = document.getElementById('normalized-text-content');
+      if (data.normalized && data.normalized !== text) {
+        normContent.textContent = data.normalized;
+        normEl.style.display = 'block';
+      }
+    }).catch(() => {});
 
     const wsUrl = location.protocol.replace('http', 'ws') + '//' + location.host + '/tts/websocket';
     _streamLog(log, 'WS', 'Connecting to ' + wsUrl, '#888');
