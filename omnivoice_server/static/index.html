@@ -219,7 +219,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
         <span id="audio-meta"></span>
         <div id="audio-meta-note" style="display:none;font-size:11px;color:#555;margin-top:2px"></div>
         <span style="margin-left:auto">
-          <a id="download-link" style="color:#3b82f6;text-decoration:none" download="speech.wav">Download</a>
+          <button id="download-btn" onclick="downloadAudio()" disabled style="background:none;border:none;color:#3b82f6;cursor:pointer;font-size:inherit;text-decoration:underline;padding:0">Download</button>
           <a id="save-speaker-link" style="display:none;cursor:pointer;color:#3b82f6;text-decoration:none;margin-left:10px" onclick="saveAsSpeaker()">Save as Speaker</a>
         </span>
       </div>
@@ -597,7 +597,7 @@ async function generate() {
     _revokeBlobUrl();
     const url = URL.createObjectURL(blob);
     _blobUrl = url;
-    document.getElementById('download-link').href = url;
+    document.getElementById('download-btn').disabled = false;
 
     document.getElementById('audio-viz').style.display = 'block';
     document.getElementById('save-speaker-link').style.display = lastWasDesign ? 'inline' : 'none';
@@ -735,7 +735,7 @@ async function streamGenerate() {
     _revokeBlobUrl();
     const url = URL.createObjectURL(blob);
     _blobUrl = url;
-    document.getElementById('download-link').href = url;
+    document.getElementById('download-btn').disabled = false;
 
     document.getElementById('audio-viz').style.display = 'block';
     document.getElementById('save-speaker-link').style.display = lastWasDesign ? 'inline' : 'none';
@@ -821,6 +821,18 @@ function togglePlay() {
 function hidePlayer() {
   document.getElementById('audio-viz').style.display = 'none';
   if (wavesurfer) { wavesurfer.destroy(); wavesurfer = null; }
+}
+
+function downloadAudio() {
+  if (!lastGeneratedBlob) return;
+  const url = URL.createObjectURL(lastGeneratedBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'speech.wav';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 async function saveAsSpeaker() {

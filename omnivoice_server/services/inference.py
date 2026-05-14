@@ -49,8 +49,11 @@ class SynthesisRequest:
     class_temperature: float | None = None
     duration: float | None = None  # Fixed output duration in seconds
     language: str | None = None  # Optional language code for multilingual pronunciation
-    t_schedule_mode: str | None = None  # "linear" or "sway"
-    sway_coeff: float | None = None  # sway coefficient, default -1.0
+    layer_penalty_factor: float | None = None
+    preprocess_prompt: bool | None = None
+    postprocess_output: bool | None = None
+    audio_chunk_duration: float | None = None
+    audio_chunk_threshold: float | None = None
 
 
 @dataclass
@@ -116,10 +119,16 @@ class OmniVoiceAdapter:
         if req.language is not None:
             kwargs["language"] = req.language
 
-        if req.t_schedule_mode is not None:
-            kwargs["t_schedule_mode"] = req.t_schedule_mode
-        if req.sway_coeff is not None:
-            kwargs["sway_coeff"] = req.sway_coeff
+        if req.layer_penalty_factor is not None:
+            kwargs["layer_penalty_factor"] = req.layer_penalty_factor
+        if req.preprocess_prompt is not None:
+            kwargs["preprocess_prompt"] = req.preprocess_prompt
+        if req.postprocess_output is not None:
+            kwargs["postprocess_output"] = req.postprocess_output
+        if req.audio_chunk_duration is not None:
+            kwargs["audio_chunk_duration"] = req.audio_chunk_duration
+        if req.audio_chunk_threshold is not None:
+            kwargs["audio_chunk_threshold"] = req.audio_chunk_threshold
 
         if req.mode == "design" and req.instruct:
             kwargs["instruct"] = req.instruct
@@ -210,7 +219,7 @@ class OmniVoiceAdapter:
             )
             minimal = {
                 "text": kwargs["text"],
-                "num_step": kwargs.get("num_step", 10),
+                "num_step": kwargs.get("num_step", 16),
             }
             if "instruct" in kwargs:
                 minimal["instruct"] = kwargs["instruct"]
@@ -481,16 +490,9 @@ class InferenceService:
         )
 
 
-_cleanup_counter = 0
-_CLEANUP_INTERVAL = 10
-
-
 def _cleanup_memory(device: str) -> None:
-    """Post-inference memory cleanup. Runs gc.collect every N requests."""
-    global _cleanup_counter
-    _cleanup_counter += 1
-    if _cleanup_counter % _CLEANUP_INTERVAL == 0:
-        gc.collect()
+    """Post-inference memory cleanup."""
+    gc.collect()
     if device == "cuda":
         try:
             torch.cuda.empty_cache()
