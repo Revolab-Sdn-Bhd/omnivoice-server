@@ -82,17 +82,27 @@ detect_cuda() {
         GPU_CC=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d ' .') || true
     fi
 
-    # Map to PyTorch CUDA index
-    # sm_120 (RTX 5090/Blackwell) needs cu130
-    if   [ "$MAJOR" -ge 13 ] || [ "$GPU_CC" -ge 120 ] 2>/dev/null; then
+    # Map to PyTorch CUDA index based on GPU CC, NOT driver version.
+    # CUDA driver is backward compatible — driver 13 works with cu126 on sm_89 GPUs.
+    if [ "$GPU_CC" -ge 120 ] 2>/dev/null; then
+        # Blackwell (RTX 5090 etc.) needs cu130
         TORCH_INDEX="cu130"
-    elif [ "$MAJOR" -eq 12 ] && [ "$MINOR" -ge 6 ]; then TORCH_INDEX="cu126"
-    elif [ "$MAJOR" -eq 12 ] && [ "$MINOR" -ge 4 ]; then TORCH_INDEX="cu124"
-    elif [ "$MAJOR" -eq 12 ];                        then TORCH_INDEX="cu121"
-    elif [ "$MAJOR" -eq 11 ] && [ "$MINOR" -ge 8 ]; then TORCH_INDEX="cu118"
+    elif [ "$GPU_CC" -ge 80 ] 2>/dev/null; then
+        # Ampere/Ada (RTX 30xx/40xx) — cu126 is best
+        TORCH_INDEX="cu126"
+    elif [ "$GPU_CC" -ge 70 ] 2>/dev/null; then
+        # Volta/Turing (V100, RTX 20xx, GTX 16xx)
+        TORCH_INDEX="cu126"
     else
-        echo "→ CUDA $CUDA_VER too old for a supported PyTorch build, falling back to CPU"
-        TORCH_INDEX="cpu"
+        # Unknown or very old GPU — try matching driver version
+        if   [ "$MAJOR" -ge 12 ] && [ "$MINOR" -ge 6 ]; then TORCH_INDEX="cu126"
+        elif [ "$MAJOR" -ge 12 ] && [ "$MINOR" -ge 4 ]; then TORCH_INDEX="cu124"
+        elif [ "$MAJOR" -ge 12 ];                        then TORCH_INDEX="cu121"
+        elif [ "$MAJOR" -ge 11 ] && [ "$MINOR" -ge 8 ]; then TORCH_INDEX="cu118"
+        else
+            echo "→ GPU too old for a supported PyTorch build, falling back to CPU"
+            TORCH_INDEX="cpu"
+        fi
     fi
     echo "→ Detected CUDA $CUDA_VER (GPU CC: ${GPU_CC:-unknown}) → PyTorch $TORCH_INDEX"
 }
