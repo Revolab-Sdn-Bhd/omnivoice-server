@@ -165,14 +165,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
       <div class="section-label">Generation Params</div>
       <div class="params-grid">
         <div class="param-group">
-          <label>Temperature</label>
-          <input type="number" id="param-temp" value="0.3" min="0" max="2" step="0.1">
-        </div>
-        <div class="param-group">
-          <label>Target LUFS</label>
-          <input type="number" id="param-lufs" value="-23" min="-60" max="0" step="1">
-        </div>
-        <div class="param-group">
           <label>Speed Mode</label>
           <select id="param-speed-mode">
             <option value="turbo">Turbo (4 steps)</option>
@@ -182,12 +174,92 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
           </select>
         </div>
         <div class="param-group">
+          <label>Speed</label>
+          <input type="number" id="param-speed" value="1.0" min="0.5" max="3.0" step="0.1">
+        </div>
+        <div class="param-group">
           <label>Duration Override</label>
           <div style="display:flex;align-items:center;gap:8px">
             <input type="range" id="param-duration" min="0.5" max="20" step="0.1" value="0" style="flex:1;display:none">
             <span id="param-duration-label" style="font-size:12px;color:#666;min-width:60px">Auto</span>
           </div>
           <div id="duration-estimate" style="font-size:11px;color:#555;margin-top:4px"></div>
+        </div>
+        <div class="param-group">
+          <label>Language</label>
+          <select id="param-language">
+            <option value="auto">Auto-detect</option>
+            <option value="en">English</option>
+            <option value="ms">Malay</option>
+          </select>
+        </div>
+        <div class="param-group">
+          <label>Target LUFS</label>
+          <input type="number" id="param-lufs" value="-23" min="-60" max="0" step="1">
+        </div>
+      </div>
+    </div>
+
+    <!-- Advanced Params (collapsible) -->
+    <div class="section">
+      <div class="section-label" style="cursor:pointer;user-select:none" onclick="toggleAdvanced()">
+        Advanced Params
+        <span id="advanced-arrow" style="color:#555;font-size:10px;margin-left:4px">&#9660;</span>
+      </div>
+      <div id="advanced-params" style="display:none;margin-top:10px">
+        <div class="params-grid">
+          <div class="param-group">
+            <label>Class Temperature</label>
+            <input type="number" id="param-class-temp" value="0.3" min="0" max="2" step="0.1">
+          </div>
+          <div class="param-group">
+            <label>Guidance Scale</label>
+            <input type="number" id="param-guidance-scale" placeholder="Server default" min="0" max="10" step="0.5">
+          </div>
+          <div class="param-group">
+            <label>T-Shift</label>
+            <input type="number" id="param-t-shift" placeholder="Server default" min="0" max="1" step="0.1">
+          </div>
+          <div class="param-group">
+            <label>Position Temperature</label>
+            <input type="number" id="param-pos-temp" placeholder="Server default" min="0" max="2" step="0.1">
+          </div>
+          <div class="param-group">
+            <label>Layer Penalty Factor</label>
+            <input type="number" id="param-layer-penalty" placeholder="Server default" min="0" max="10" step="0.1">
+          </div>
+          <div class="param-group">
+            <label>Denoise</label>
+            <select id="param-denoise">
+              <option value="">Server default</option>
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+          <div class="param-group">
+            <label>Preprocess Prompt</label>
+            <select id="param-preprocess">
+              <option value="">Server default</option>
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+          <div class="param-group">
+            <label>Postprocess Output</label>
+            <select id="param-postprocess">
+              <option value="">Server default</option>
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+          <div class="param-group">
+            <label>Audio Chunk Duration</label>
+            <input type="number" id="param-chunk-dur" placeholder="Server default" min="0.1" max="30" step="0.5">
+          </div>
+          <div class="param-group">
+            <label>Audio Chunk Threshold</label>
+            <input type="number" id="param-chunk-thresh" placeholder="Server default" min="0" max="1" step="0.01">
+          </div>
         </div>
       </div>
     </div>
@@ -637,15 +709,22 @@ async function generate() {
       }
     }).catch(() => { normEl.style.display = 'none'; });
 
+    const p = _collectParams(text);
+
     const body = {
-      text,
-      voice_ref_path: selectedSpeaker || undefined,
-      instruct: activeInstruct || undefined,
-      language: _detectLang(),
-      temperature: _num('param-temp', 0.3),
+      text: p.text,
+      voice_ref_path: p.voiceId !== 'anwar' || selectedSpeaker ? p.voiceId : undefined,
+      instruct: p.instruct || undefined,
+      language: p.lang,
+      temperature: p.classTemperature,
       target_lufs: _num('param-lufs', -23),
-      duration: _getDuration(),
-      ..._speedModeParams(),
+      duration: p.duration,
+      num_step: p.speedMode,
+      layer_penalty_factor: p.layerPenalty,
+      preprocess_prompt: p.preprocess,
+      postprocess_output: p.postprocess,
+      audio_chunk_duration: p.chunkDur,
+      audio_chunk_threshold: p.chunkThresh,
     };
 
     const t0 = performance.now();
@@ -740,6 +819,8 @@ async function streamGenerate() {
     const wsUrl = location.protocol.replace('http', 'ws') + '//' + location.host + '/tts/websocket';
     _streamLog(log, 'WS', 'Connecting to ' + wsUrl, '#888');
 
+    const p = _collectParams(text);
+
     const ws = new WebSocket(wsUrl);
     const pcmChunks = [];
     const ctxId = 'stream-' + Date.now();
@@ -749,15 +830,27 @@ async function streamGenerate() {
 
     await new Promise((resolve, reject) => {
       ws.onopen = () => {
-        const speedParams = _speedModeParams();
         const payload = {
-          transcript: text,
-          voice: { mode: 'id', id: selectedSpeaker || 'anwar' },
-          output_format: { container: 'raw', encoding: 'pcm_s16le', sample_rate: 24000 },
+          transcript: p.text,
+          voice: { mode: 'id', id: p.voiceId },
           context_id: ctxId,
           continue: false,
-          language: _detectLang(),
-          num_step: speedParams.num_step,
+          language: p.lang,
+          mode: p.mode,
+          instruct: p.instruct,
+          speed: p.speed,
+          num_step: p.speedMode,
+          duration: p.duration,
+          class_temperature: p.classTemperature,
+          guidance_scale: p.guidanceScale,
+          denoise: p.denoise,
+          t_shift: p.tShift,
+          position_temperature: p.posTemp,
+          layer_penalty_factor: p.layerPenalty,
+          preprocess_prompt: p.preprocess,
+          postprocess_output: p.postprocess,
+          audio_chunk_duration: p.chunkDur,
+          audio_chunk_threshold: p.chunkThresh,
         };
         _streamLog(log, 'SEND', JSON.stringify(payload).substring(0, 120) + '...', '#5588ff');
         ws.send(JSON.stringify(payload));
@@ -940,19 +1033,70 @@ function _num(id, fallback) {
   const v = parseFloat(document.getElementById(id).value);
   return isFinite(v) ? v : fallback;
 }
-function _speedModeParams() {
+function _optionalNum(id) {
+  const v = parseFloat(document.getElementById(id).value);
+  return isFinite(v) ? v : null;
+}
+function _optionalBool(id) {
+  const v = document.getElementById(id).value;
+  return v === '' ? null : v === 'true';
+}
+function _numStepFromMode() {
   const mode = document.getElementById('param-speed-mode').value;
-  if (mode === 'turbo') return { num_step: 4 };
-  if (mode === 'fast') return { num_step: 10 };
-  if (mode === 'normal') return { num_step: 16 };
-  return { num_step: 32 };
+  if (mode === 'turbo') return 4;
+  if (mode === 'fast') return 10;
+  if (mode === 'normal') return 16;
+  return 32;
 }
 function _detectLang() {
+  const sel = document.getElementById('param-language').value;
+  if (sel !== 'auto') return sel;
   const s = speakers.find(v => v.id === selectedSpeaker);
   const ld = s && s.language_detected;
   if (ld === 'ms') return 'ms';
-  if (ld === 'ja') return 'en';
   return 'en';
+}
+
+// Centralized param collection — single source of truth for Generate + Stream
+function _collectParams(text) {
+  const speedMode = _numStepFromMode();
+  const lang = _detectLang();
+  const duration = _getDuration();
+
+  // Advanced params (null = use server default)
+  const classTemperature = _num('param-class-temp', 0.3);
+  const guidanceScale = _optionalNum('param-guidance-scale');
+  const tShift = _optionalNum('param-t-shift');
+  const posTemp = _optionalNum('param-pos-temp');
+  const layerPenalty = _optionalNum('param-layer-penalty');
+  const denoise = _optionalBool('param-denoise');
+  const preprocess = _optionalBool('param-preprocess');
+  const postprocess = _optionalBool('param-postprocess');
+  const chunkDur = _optionalNum('param-chunk-dur');
+  const chunkThresh = _optionalNum('param-chunk-thresh');
+  const speed = _num('param-speed', 1.0);
+
+  const mode = activeInstruct ? 'design' : 'clone';
+  const instruct = activeInstruct || null;
+  const voiceId = selectedSpeaker || 'anwar';
+
+  return {
+    text, mode, instruct, voiceId, lang, speed, speedMode, duration,
+    classTemperature, guidanceScale, tShift, posTemp, layerPenalty,
+    denoise, preprocess, postprocess, chunkDur, chunkThresh,
+  };
+}
+
+function toggleAdvanced() {
+  const el = document.getElementById('advanced-params');
+  const arrow = document.getElementById('advanced-arrow');
+  if (el.style.display === 'none') {
+    el.style.display = 'block';
+    arrow.innerHTML = '&#9650;';
+  } else {
+    el.style.display = 'none';
+    arrow.innerHTML = '&#9660;';
+  }
 }
 
 let estimatedDurationS = 0;

@@ -118,6 +118,20 @@ async def tts_websocket(ws: WebSocket):
             num_step = msg.get("num_step")
             voice_cfg = msg.get("voice", {})
             voice_id = voice_cfg.get("id", "anwar") if isinstance(voice_cfg, dict) else "anwar"
+            mode = msg.get("mode", "auto")
+            instruct = msg.get("instruct")
+            speed = msg.get("speed", 1.0)
+            guidance_scale = msg.get("guidance_scale")
+            denoise = msg.get("denoise")
+            t_shift = msg.get("t_shift")
+            duration = msg.get("duration")
+            position_temperature = msg.get("position_temperature")
+            class_temperature = msg.get("class_temperature")
+            layer_penalty_factor = msg.get("layer_penalty_factor")
+            preprocess_prompt = msg.get("preprocess_prompt")
+            postprocess_output = msg.get("postprocess_output")
+            audio_chunk_duration = msg.get("audio_chunk_duration")
+            audio_chunk_threshold = msg.get("audio_chunk_threshold")
 
             # Clear cancellation for this context on new message
             cancelled_contexts.discard(ctx_id)
@@ -140,7 +154,21 @@ async def tts_websocket(ws: WebSocket):
                 _process_transcript(
                     ws, msg, ctx_id, transcript, language, voice_id,
                     cancelled_contexts, active_tasks, t0, preceding,
-                    num_step,
+                    mode=mode,
+                    instruct=instruct,
+                    num_step=num_step,
+                    speed=speed,
+                    guidance_scale=guidance_scale,
+                    denoise=denoise,
+                    t_shift=t_shift,
+                    duration=duration,
+                    position_temperature=position_temperature,
+                    class_temperature=class_temperature,
+                    layer_penalty_factor=layer_penalty_factor,
+                    preprocess_prompt=preprocess_prompt,
+                    postprocess_output=postprocess_output,
+                    audio_chunk_duration=audio_chunk_duration,
+                    audio_chunk_threshold=audio_chunk_threshold,
                 )
             )
             active_tasks.setdefault(ctx_id, []).append(task)
@@ -183,7 +211,22 @@ async def _process_transcript(
     active_tasks: dict[str, list[asyncio.Task]],
     t0: float,
     preceding: list[asyncio.Task],
+    *,
+    mode: str = "auto",
+    instruct: str | None = None,
     num_step: int | None = None,
+    speed: float = 1.0,
+    guidance_scale: float | None = None,
+    denoise: bool | None = None,
+    t_shift: float | None = None,
+    duration: float | None = None,
+    position_temperature: float | None = None,
+    class_temperature: float | None = None,
+    layer_penalty_factor: float | None = None,
+    preprocess_prompt: bool | None = None,
+    postprocess_output: bool | None = None,
+    audio_chunk_duration: float | None = None,
+    audio_chunk_threshold: float | None = None,
 ) -> None:
     """Process a single transcript message: split sentences, synthesize, stream."""
     import numpy as np
@@ -209,12 +252,24 @@ async def _process_transcript(
 
         syn_req = SynthesisRequest(
             text=sentence,
-            mode="clone",
+            mode=mode,
+            instruct=instruct,
             ref_audio_path=audio_path,
             ref_text=ref_text,
-            speed=1.0,
+            speed=speed,
             language=language if language != "en" else None,
             num_step=num_step,
+            guidance_scale=guidance_scale,
+            denoise=denoise,
+            t_shift=t_shift,
+            duration=duration,
+            position_temperature=position_temperature,
+            class_temperature=class_temperature,
+            layer_penalty_factor=layer_penalty_factor,
+            preprocess_prompt=preprocess_prompt,
+            postprocess_output=postprocess_output,
+            audio_chunk_duration=audio_chunk_duration,
+            audio_chunk_threshold=audio_chunk_threshold,
         )
 
         try:
@@ -254,6 +309,153 @@ async def _process_transcript(
         "[ws] ctx=%s ttfc=%.3fs total=%.3fs chunks=%d",
         ctx_id, time.monotonic() - t0, time.monotonic() - t0, chunk_idx,
     )
+
+
+@router.get("/api/docs/websocket", tags=["Docs"])
+async def websocket_docs():
+    """WebSocket TTS API documentation."""
+    return _build_ws_docs()
+
+
+def _build_ws_docs() -> dict:
+    p = {
+        "transcript": {
+            "type": "string", "required": True,
+            "description": "Text to synthesize",
+        },
+        "context_id": {
+            "type": "string", "default": "",
+            "description": "ID for concurrent streams",
+        },
+        "continue": {
+            "type": "bool", "default": True,
+            "description": "If false, sends done after synthesis",
+        },
+        "language": {
+            "type": "string", "default": "en",
+            "description": "Language code (en, ms, etc.)",
+        },
+        "mode": {
+            "type": "string", "default": "auto",
+            "enum": ["auto", "design", "clone"],
+            "description": "Synthesis mode",
+        },
+        "instruct": {
+            "type": "string|null",
+            "description": "Instruction for mode=design",
+        },
+        "voice": {
+            "type": "object", "default": {},
+            "description": "Voice config with 'id' field",
+        },
+        "voice.id": {
+            "type": "string", "default": "anwar",
+            "description": "Voice name from /voices",
+        },
+        "speed": {
+            "type": "float", "default": 1.0,
+            "description": "Speech speed multiplier",
+        },
+        "num_step": {
+            "type": "int|null",
+            "description": "Diffusion steps (null=server default)",
+        },
+        "guidance_scale": {
+            "type": "float|null",
+            "description": "Classifier-free guidance scale",
+        },
+        "denoise": {
+            "type": "bool|null",
+            "description": "Apply denoising",
+        },
+        "t_shift": {
+            "type": "float|null",
+            "description": "Time shift for diffusion sampling",
+        },
+        "duration": {
+            "type": "float|null",
+            "description": "Fixed output duration in seconds",
+        },
+        "position_temperature": {
+            "type": "float|null",
+            "description": "Position temperature",
+        },
+        "class_temperature": {
+            "type": "float|null",
+            "description": "Class temperature",
+        },
+        "layer_penalty_factor": {
+            "type": "float|null",
+            "description": "Layer penalty factor",
+        },
+        "preprocess_prompt": {
+            "type": "bool|null",
+            "description": "Preprocess text prompt",
+        },
+        "postprocess_output": {
+            "type": "bool|null",
+            "description": "Postprocess audio output",
+        },
+        "audio_chunk_duration": {
+            "type": "float|null",
+            "description": "Audio chunk duration in seconds",
+        },
+        "audio_chunk_threshold": {
+            "type": "float|null",
+            "description": "Audio chunk threshold",
+        },
+    }
+    return {
+        "endpoint": "ws://{host}:{port}/tts/websocket",
+        "protocol": "JSON over WebSocket",
+        "messages": {
+            "generate": {
+                "description": "Synthesize speech and stream audio chunks.",
+                "params": p,
+                "example": {
+                    "transcript": "Hello, how are you?",
+                    "context_id": "ctx-1",
+                    "continue": False,
+                    "language": "en",
+                    "mode": "auto",
+                    "voice": {"id": "anwar"},
+                    "speed": 1.0,
+                    "num_step": 16,
+                },
+            },
+            "cancel": {
+                "description": "Cancel ongoing synthesis for a context.",
+                "params": {
+                    "cancel": {"type": "bool", "required": True},
+                    "context_id": {"type": "string", "required": True},
+                },
+                "example": {"cancel": True, "context_id": "ctx-1"},
+            },
+        },
+        "response_messages": {
+            "audio_chunk": {
+                "type": "audio_chunk",
+                "data": "base64 int16 PCM 24kHz mono, 1s chunks",
+                "done": False,
+                "status_code": 206,
+                "context_id": "ctx-1",
+            },
+            "done": {
+                "type": "done",
+                "done": True,
+                "status_code": 200,
+                "context_id": "ctx-1",
+            },
+            "error": {
+                "type": "error",
+                "error": "error message",
+                "done": True,
+                "status_code": 500,
+                "context_id": "ctx-1",
+            },
+        },
+        "audio_format": "int16 PCM, 24kHz, mono, base64, 1s chunks.",
+    }
 
 
 def _cleanup_task(

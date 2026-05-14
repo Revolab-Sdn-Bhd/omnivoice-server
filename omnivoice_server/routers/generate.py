@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..services.inference import InferenceService, QueueFullError, SynthesisRequest
 from ..services.metrics import MetricsService
 from ..utils.audio import tensors_to_wav_bytes
-from ..utils.text import normalize_for_tts, split_sentences
+from ..utils.text import split_sentences
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -196,6 +196,12 @@ class TTSRequest(BaseModel):
     min_p: float = Field(default=0.05, ge=0.0, le=1.0)
     max_tokens: int = Field(default=1000, ge=1)
     num_step: int | None = Field(default=None, ge=2, le=32)
+    speed: float = Field(default=1.0, ge=0.5, le=3.0)
+    guidance_scale: float | None = Field(default=None, ge=0.0)
+    denoise: bool | None = Field(default=None)
+    t_shift: float | None = Field(default=None, ge=0.0, le=1.0)
+    position_temperature: float | None = Field(default=None, ge=0.0)
+    class_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     layer_penalty_factor: float | None = Field(default=None)
     preprocess_prompt: bool | None = Field(default=None)
     postprocess_output: bool | None = Field(default=None)
@@ -281,7 +287,7 @@ def _build_synthesis_req(body: TTSRequest, cfg) -> SynthesisRequest:
     else:
         mode = "design"
 
-    normalized_text = normalize_for_tts(body.text, language=body.language)
+    normalized_text = body.text
 
     return SynthesisRequest(
         text=normalized_text,
@@ -289,11 +295,15 @@ def _build_synthesis_req(body: TTSRequest, cfg) -> SynthesisRequest:
         instruct=body.instruct,
         ref_audio_path=audio_path,
         ref_text=ref_text,
-        speed=1.0,
+        speed=body.speed,
         duration=body.duration,
         num_step=body.num_step,
         language=body.language if body.language != "en" else None,
-        class_temperature=body.temperature if body.temperature != 0.3 else None,
+        guidance_scale=body.guidance_scale,
+        denoise=body.denoise,
+        t_shift=body.t_shift,
+        position_temperature=body.position_temperature,
+        class_temperature=body.class_temperature,
         layer_penalty_factor=body.layer_penalty_factor,
         preprocess_prompt=body.preprocess_prompt,
         postprocess_output=body.postprocess_output,
@@ -437,9 +447,19 @@ async def _stream_sse(
             mode=base_req.mode,
             ref_audio_path=base_req.ref_audio_path,
             ref_text=base_req.ref_text,
-            speed=1.0,
+            speed=base_req.speed,
             language=base_req.language,
+            num_step=base_req.num_step,
+            guidance_scale=base_req.guidance_scale,
+            denoise=base_req.denoise,
+            t_shift=base_req.t_shift,
+            position_temperature=base_req.position_temperature,
             class_temperature=base_req.class_temperature,
+            layer_penalty_factor=base_req.layer_penalty_factor,
+            preprocess_prompt=base_req.preprocess_prompt,
+            postprocess_output=base_req.postprocess_output,
+            audio_chunk_duration=base_req.audio_chunk_duration,
+            audio_chunk_threshold=base_req.audio_chunk_threshold,
         )
 
         try:

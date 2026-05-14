@@ -128,6 +128,15 @@ def transcribe(whx_model, wav_bytes: bytes) -> str:
         return ""
 
 
+def normalize_text_for_comparison(text: str) -> str:
+    """Normalize reference text using revo-norm for fair CER comparison."""
+    try:
+        from omnivoice_server.utils.text import normalize_for_tts
+        return normalize_for_tts(text)
+    except Exception:
+        return text
+
+
 def compute_cer(reference: str, hypothesis: str) -> float:
     from jiwer import cer
     return cer(reference, hypothesis)
@@ -170,14 +179,20 @@ def run_test(
         hypothesis = transcribe(whx_model, wav_bytes)
         trans_time = time.monotonic() - t0
 
-        cer_score = compute_cer(quote, hypothesis)
+        normalized_ref = normalize_text_for_comparison(quote)
+        normalized_hyp = normalize_text_for_comparison(hypothesis)
+        cer_raw = compute_cer(quote, hypothesis)
+        cer_norm = compute_cer(normalized_ref, normalized_hyp)
 
         result = {
             "run": run_idx,
             "quote_idx": i,
             "reference": quote,
+            "reference_normalized": normalized_ref,
             "hypothesis": hypothesis,
-            "cer": round(cer_score, 4),
+            "hypothesis_normalized": normalized_hyp,
+            "cer": round(cer_raw, 4),
+            "cer_normalized": round(cer_norm, 4),
             "gen_time_s": round(gen_time, 2),
             "trans_time_s": round(trans_time, 2),
         }
@@ -188,7 +203,7 @@ def run_test(
 
         logger.info(
             "  CER=%.4f gen=%.1fs trans=%.1fs",
-            cer_score, gen_time, trans_time,
+            cer_raw, gen_time, trans_time,
         )
 
     del whx_model
@@ -203,11 +218,15 @@ def compute_summary(result_file: Path) -> dict:
         return {}
 
     cers = [r["cer"] for r in results]
+    cers_norm = [r.get("cer_normalized", r["cer"]) for r in results]
     return {
         "num_quotes": len(results),
         "mean_cer": round(sum(cers) / len(cers), 4),
         "max_cer": round(max(cers), 4),
         "min_cer": round(min(cers), 4),
+        "mean_cer_normalized": round(sum(cers_norm) / len(cers_norm), 4),
+        "max_cer_normalized": round(max(cers_norm), 4),
+        "min_cer_normalized": round(min(cers_norm), 4),
         "total_gen_time_s": round(sum(r["gen_time_s"] for r in results), 2),
         "total_trans_time_s": round(
             sum(r["trans_time_s"] for r in results), 2
@@ -286,16 +305,21 @@ def main():
             summary["run"] = run_idx
             all_summaries.append(summary)
             logger.info(
-                "Run %d: mean_cer=%.4f max_cer=%.4f",
-                run_idx, summary["mean_cer"], summary["max_cer"],
+                "Run %d: mean_cer=%.4f (norm=%.4f) max_cer=%.4f",
+                run_idx, summary["mean_cer"],
+                summary.get("mean_cer_normalized", 0), summary["max_cer"],
             )
 
     overall_cer = 0.0
+    overall_cer_norm = 0.0
     if all_summaries:
         overall_cer = sum(s["mean_cer"] for s in all_summaries) / len(all_summaries)
+        overall_cer_norm = sum(
+            s.get("mean_cer_normalized", s["mean_cer"]) for s in all_summaries
+        ) / len(all_summaries)
         logger.info(
-            "Overall mean CER across %d runs: %.4f",
-            len(all_summaries), overall_cer,
+            "Overall mean CER across %d runs: %.4f (normalized: %.4f)",
+            len(all_summaries), overall_cer, overall_cer_norm,
         )
 
     summary_file = rev_dir / "summary.json"
@@ -306,6 +330,7 @@ def main():
         "num_quotes": len(quotes),
         "runs": all_summaries,
         "overall_mean_cer": round(overall_cer, 4) if all_summaries else None,
+        "overall_mean_cer_normalized": round(overall_cer_norm, 4) if all_summaries else None,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
     summary_file.write_text(json.dumps(summary_data, indent=2))

@@ -21,7 +21,6 @@ from pydantic import BaseModel, Field
 from ..services.inference import InferenceService, QueueFullError, SynthesisRequest
 from ..services.metrics import MetricsService
 from ..utils.audio import encode_tensors, tensors_to_wav_bytes
-from ..utils.text import normalize_for_tts
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -88,7 +87,7 @@ def _build_synthesis_req(body: OpenAISpeechRequest, cfg) -> SynthesisRequest:
         mode = "design"
 
     return SynthesisRequest(
-        text=normalize_for_tts(body.input, language=body.language),
+        text=body.input,
         mode=mode,
         ref_audio_path=audio_path,
         ref_text=ref_text,
@@ -249,7 +248,7 @@ async def _stream_sse(
         t_sent = time.monotonic()
 
         syn_req = SynthesisRequest(
-            text=normalize_for_tts(sentence, language=body.language),
+            text=sentence,
             mode=base_req.mode,
             ref_audio_path=base_req.ref_audio_path,
             ref_text=base_req.ref_text,
