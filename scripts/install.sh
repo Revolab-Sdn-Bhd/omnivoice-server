@@ -76,9 +76,16 @@ detect_cuda() {
     MAJOR="${CUDA_VER%%.*}"
     MINOR="${CUDA_VER#*.}"; MINOR="${MINOR%%.*}"
 
-    # Map driver CUDA version to best PyTorch CUDA index
-    # PyTorch releases lag behind CUDA — use latest supported index
-    if   [ "$MAJOR" -ge 13 ];                        then TORCH_INDEX="cu126"
+    # Detect GPU compute capability to pick the right PyTorch build
+    GPU_CC=""
+    if command -v nvidia-smi &>/dev/null; then
+        GPU_CC=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d ' .') || true
+    fi
+
+    # Map to PyTorch CUDA index
+    # sm_120 (RTX 5090/Blackwell) needs cu130
+    if   [ "$MAJOR" -ge 13 ] || [ "$GPU_CC" -ge 120 ] 2>/dev/null; then
+        TORCH_INDEX="cu130"
     elif [ "$MAJOR" -eq 12 ] && [ "$MINOR" -ge 6 ]; then TORCH_INDEX="cu126"
     elif [ "$MAJOR" -eq 12 ] && [ "$MINOR" -ge 4 ]; then TORCH_INDEX="cu124"
     elif [ "$MAJOR" -eq 12 ];                        then TORCH_INDEX="cu121"
@@ -87,12 +94,7 @@ detect_cuda() {
         echo "→ CUDA $CUDA_VER too old for a supported PyTorch build, falling back to CPU"
         TORCH_INDEX="cpu"
     fi
-
-    if [ "$MAJOR" -ge 13 ]; then
-        echo "→ Detected CUDA $CUDA_VER → PyTorch $TORCH_INDEX (cu130 not yet stable, using cu126)"
-    else
-        echo "→ Detected CUDA $CUDA_VER → PyTorch $TORCH_INDEX"
-    fi
+    echo "→ Detected CUDA $CUDA_VER (GPU CC: ${GPU_CC:-unknown}) → PyTorch $TORCH_INDEX"
 }
 
 # ── Main install ─────────────────────────────────────────────────────────────
@@ -114,13 +116,15 @@ if [ "$TORCH_INDEX" != "cpu" ]; then
 
     # Pin torch to a known-good version range to avoid bleeding-edge breakage
     uv pip install \
-        "torch>=2.5.0,<2.12" \
+        "torch>=2.5.0" \
         "torchaudio>=2.5.0" \
-        "torchcodec>=0.1.0" \
         --index-url "$PYTORCH_URL" \
         --reinstall-package torch \
-        --reinstall-package torchaudio \
-        --reinstall-package torchcodec
+        --reinstall-package torchaudio
+
+    # torchcodec: install from PyPI (avoids cu130 missing lib issues)
+    # then reinstall only torch/torchaudio from CUDA index
+    uv pip install "torchcodec>=0.1.0" --reinstall-package torchcodec
 fi
 
 # ── Verify ────────────────────────────────────────────────────────────────────
