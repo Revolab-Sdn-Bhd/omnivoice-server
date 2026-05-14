@@ -68,8 +68,13 @@ def _resolve_voice(voice_id: str, cfg) -> tuple[str | None, str | None]:
     wav_path = cfg.voices_dir / f"{voice_id}.wav"
     if not wav_path.is_file():
         return None, None
-    txt_path = wav_path.with_suffix(".txt")
-    ref_text = txt_path.read_text().strip() if txt_path.exists() else ""
+    ref_text = ""
+    json_path = wav_path.with_suffix(".json")
+    if json_path.exists():
+        try:
+            ref_text = json.loads(json_path.read_text()).get("transcript", "")
+        except (json.JSONDecodeError, OSError):
+            pass
     return str(wav_path), ref_text
 
 

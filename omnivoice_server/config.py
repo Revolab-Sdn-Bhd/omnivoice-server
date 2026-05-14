@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     )
 
     # Server
-    host: str = Field(default="127.0.0.1", description="Bind host")
+    host: str = Field(default="0.0.0.0", description="Bind host")
     port: int = Field(default=8880, ge=0, le=65535)
     log_level: Literal["debug", "info", "warning", "error"] = "info"
 
@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     )
     model_revision: str = Field(
         default="",
+        # default="79df7c44b6e4c96cc0bb72e39e860bd2ae984f59",
         description="Git revision (branch, tag, commit) to load from HuggingFace",
     )
     model_cache_dir: Path | None = Field(
@@ -42,7 +43,12 @@ class Settings(BaseSettings):
         description="Override HuggingFace model cache directory",
     )
     device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
-    num_step: int = Field(default=16, ge=1, le=64)
+    num_step: int = Field(
+        default=16,
+        ge=16,
+        le=32,
+        description="Iterative decoding steps. Higher = better quality, slower. 16=fast, 32=balanced",
+    )
 
     # Optimization
     compile_mode: Literal["none", "default", "reduce-overhead", "max-autotune"] = Field(
@@ -88,7 +94,7 @@ class Settings(BaseSettings):
         description="Noise schedule shift. Affects quality/speed tradeoff.",
     )
     position_temperature: float = Field(
-        default=5.0,
+        default=2.0,
         ge=0.0,
         le=10.0,
         description=(
@@ -103,6 +109,18 @@ class Settings(BaseSettings):
         description=(
             "Temperature for token sampling at each step. "
             "0=greedy, higher=more randomness."
+        ),
+    )
+    layer_penalty_factor: float = Field(
+        default=5.0,
+        ge=0.0,
+        description="Penalty factor applied across decoding layers. Higher = stronger penalty.",
+    )
+    preprocess_prompt: bool = Field(
+        default=False,
+        description=(
+            "Upstream text preprocessing before generation. "
+            "Disabled by default since the server already runs normalize_for_tts()."
         ),
     )
 

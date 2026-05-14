@@ -99,6 +99,11 @@ class OmniVoiceAdapter:
             if req.class_temperature is not None
             else self._cfg.class_temperature
         )
+        layer_penalty_factor = (
+            req.layer_penalty_factor
+            if req.layer_penalty_factor is not None
+            else self._cfg.layer_penalty_factor
+        )
 
         kwargs: dict = {
             "text": req.text,
@@ -109,6 +114,7 @@ class OmniVoiceAdapter:
             "t_shift": t_shift,
             "position_temperature": position_temperature,
             "class_temperature": class_temperature,
+            "layer_penalty_factor": layer_penalty_factor,
         }
 
         # Add optional duration parameter if provided
@@ -119,10 +125,10 @@ class OmniVoiceAdapter:
         if req.language is not None:
             kwargs["language"] = req.language
 
-        if req.layer_penalty_factor is not None:
-            kwargs["layer_penalty_factor"] = req.layer_penalty_factor
-        if req.preprocess_prompt is not None:
-            kwargs["preprocess_prompt"] = req.preprocess_prompt
+        kwargs["preprocess_prompt"] = (
+            req.preprocess_prompt if req.preprocess_prompt is not None
+            else self._cfg.preprocess_prompt
+        )
         if req.postprocess_output is not None:
             kwargs["postprocess_output"] = req.postprocess_output
         if req.audio_chunk_duration is not None:
