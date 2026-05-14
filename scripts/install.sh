@@ -122,12 +122,12 @@ uv sync
 # Reinstall torch stack from the correct CUDA index
 if [ "$TORCH_INDEX" != "cpu" ]; then
     PYTORCH_URL="https://download.pytorch.org/whl/$TORCH_INDEX"
-    echo "→ Installing torch+$TORCH_INDEX from $PYTORCH_URL"
 
     # Force reinstall torch+torchaudio from the correct CUDA index
     # Must uninstall first to handle downgrades (cu130 → cu126)
-    echo "→ Uninstalling stale torch packages..."
+    echo "→ Cleaning stale torch + nvidia packages..."
     uv pip uninstall -y torch torchaudio torchcodec 2>/dev/null || true
+    uv pip uninstall -y $(uv pip list 2>/dev/null | grep -i "^nvidia-" | awk '{print $1}') 2>/dev/null || true
 
     echo "→ Installing torch+$TORCH_INDEX from $PYTORCH_URL"
     uv pip install torch torchaudio --index-url "$PYTORCH_URL"
