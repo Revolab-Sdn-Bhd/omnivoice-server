@@ -36,6 +36,28 @@ class ModelService:
         with ThreadPoolExecutor(max_workers=1) as ex:
             await loop.run_in_executor(ex, self._load_sync)
 
+    async def reload(self) -> None:
+        """Unload current model and reload (e.g. after revision change)."""
+        loop = asyncio.get_running_loop()
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            await loop.run_in_executor(ex, self._unload_sync)
+            await loop.run_in_executor(ex, self._load_sync)
+
+    def _unload_sync(self) -> None:
+        """Free current model from GPU/CPU memory."""
+        if self._model is not None:
+            logger.info("Unloading current model...")
+            del self._model
+            self._model = None
+            self._loaded = False
+        gc.collect()
+        if self.cfg.device == "cuda":
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
     def _load_sync(self) -> None:
         from omnivoice import OmniVoice
 
@@ -111,7 +133,13 @@ class ModelService:
         return self._loaded
 
     def _resolve_revision_hash(self) -> None:
-        """Resolve the loaded model's commit hash from the HF cache."""
+        """Resolve the loaded model's commit hash."""
+        # If a specific revision was requested, use it directly
+        if self.cfg.model_revision:
+            self.model_revision_hash = self.cfg.model_revision[:8]
+            return
+
+        # Otherwise resolve from HF cache (picks latest cached)
         try:
             from huggingface_hub import scan_cache_dir
             repo_id = self.cfg.model_id

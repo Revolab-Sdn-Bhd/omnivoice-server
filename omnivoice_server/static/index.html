@@ -141,7 +141,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <!-- Main Content -->
   <div class="main">
     <h1>RevoVoice</h1>
-    <p class="subtitle">Text-to-speech generation <span id="model-rev" style="color:#444;font-size:11px;margin-left:6px"></span></p>
+    <p class="subtitle">Text-to-speech generation <span id="model-rev" style="color:#444;font-size:11px;margin-left:6px"></span>
+      <select id="revision-select" onchange="switchRevision(this.value)" style="font-size:10px;margin-left:4px;max-width:180px;color:#444;border:1px solid #ccc;border-radius:3px;padding:1px 4px;background:#fff;cursor:pointer"></select>
+      <span id="revision-status" style="font-size:10px;color:#888;margin-left:4px"></span>
+    </p>
 
     <!-- Prompt Presets -->
     <div class="section">
@@ -321,8 +324,10 @@ async function init() {
 
 async function loadModelInfo() {
   try {
-    const res = await fetch('/health');
-    const data = await res.json();
+    const [healthRes, revRes] = await Promise.all([fetch('/health'), fetch('/api/model/revisions')]);
+    const data = await healthRes.json();
+    const revData = await revRes.json();
+
     const el = document.getElementById('model-rev');
     if (data.model_revision) {
       el.textContent = `${data.model_id} @ ${data.model_revision}`;
@@ -331,7 +336,75 @@ async function loadModelInfo() {
     if (data.voices_revision) {
       vel.textContent = `@ ${data.voices_revision}`;
     }
+
+    // Populate revision dropdown
+    const sel = document.getElementById('revision-select');
+    sel.innerHTML = '';
+    const current = revData.current_revision || data.model_revision;
+    for (const rev of revData.revisions || []) {
+      const opt = document.createElement('option');
+      opt.value = rev.commit_hash;
+      const label = rev.title || rev.short_hash;
+      opt.textContent = `${rev.short_hash} ${label && label !== rev.short_hash ? label.substring(0, 40) : ''}`;
+      if (current && rev.short_hash === current) opt.selected = true;
+      sel.appendChild(opt);
+    }
   } catch(e) {}
+}
+
+async function switchRevision(hash) {
+  if (!hash) return;
+  const status = document.getElementById('revision-status');
+  const sel = document.getElementById('revision-select');
+  sel.disabled = true;
+  status.textContent = 'Switching... (may take 1-2 min)';
+  try {
+    const res = await fetch('/api/model/switch-revision', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({revision: hash}),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      if (data.status === 'already_active') {
+        status.textContent = 'Already active';
+      } else {
+        status.textContent = 'Reloading model...';
+        // Poll health until model is back
+        for (let i = 0; i < 60; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            const h = await fetch('/health');
+            const hd = await h.json();
+            if (hd.status === 'ok') {
+              status.textContent = 'Switched to ' + hd.model_revision;
+              await loadModelInfo();
+              break;
+            }
+          } catch(e) { /* server restarting, retry */ }
+        }
+      }
+    } else {
+      status.textContent = 'Failed: ' + (data.detail || 'error');
+    }
+  } catch(e) {
+    status.textContent = 'Connection lost — model reloading...';
+    // Poll until back
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        const h = await fetch('/health');
+        const hd = await h.json();
+        if (hd.status === 'ok') {
+          status.textContent = 'Switched to ' + hd.model_revision;
+          await loadModelInfo();
+          break;
+        }
+      } catch(e2) {}
+    }
+  }
+  sel.disabled = false;
+  setTimeout(() => { status.textContent = ''; }, 8000);
 }
 
 // ── Load speakers from GET /voices ──────────────────────────────────────────
