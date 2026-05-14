@@ -26,17 +26,31 @@ cd omnivoice-server
 
 ## 2. Install RevoVoice server
 
-The install script auto-detects your GPU and installs the matching PyTorch:
+The install script auto-detects your GPU architecture and installs the matching PyTorch:
 
 ```bash
 bash scripts/install.sh
 ```
 
 What it does:
-1. Detects CUDA version from `nvidia-smi` (falls back to CPU if no GPU)
-2. Runs `uv sync` to install all Python dependencies
-3. Reinstalls `torch`, `torchaudio`, `torchcodec` with the correct CUDA variant
-4. Verifies the installation
+1. Checks system dependencies (Python 3.10+, uv, git, FFmpeg)
+2. Detects GPU compute capability (e.g. sm_89 for RTX 4090)
+3. Runs `uv sync` to install all Python dependencies
+4. Purges stale nvidia/torch packages to avoid version conflicts
+5. Installs `torch` + `torchaudio` with the correct CUDA variant
+6. Installs `torchcodec` from PyPI
+7. Verifies the installation
+
+### Supported GPU architectures
+
+| GPU | Compute Capability | PyTorch Index |
+|-----|-------------------|---------------|
+| RTX 5090 (Blackwell) | sm_120 | cu130 |
+| RTX 4090 (Ada) | sm_89 | cu126 |
+| RTX 3090 (Ampere) | sm_86 | cu126 |
+| RTX 2080 (Turing) | sm_75 | cu126 |
+| V100 (Volta) | sm_70 | cu126 |
+| No GPU | — | CPU |
 
 If you don't have `uv`:
 ```bash
