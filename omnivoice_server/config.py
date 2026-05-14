@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     )
 
     # Server
-    host: str = Field(default="127.0.0.1", description="Bind host")
+    host: str = Field(default="0.0.0.0", description="Bind host")
     port: int = Field(default=8880, ge=0, le=65535)
     log_level: Literal["debug", "info", "warning", "error"] = "info"
 
