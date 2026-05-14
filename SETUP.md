@@ -8,6 +8,14 @@ Complete setup from scratch for RevoVoice server and revo-norm text normalizatio
 - **uv** — [install](https://docs.astral.sh/uv/getting-started/installation/)
 - **NVIDIA GPU** with CUDA 11.8+ drivers (recommended), or CPU-only
 - **Git**
+- **FFmpeg** — required for audio decoding (torchcodec)
+  ```bash
+  # Ubuntu/Debian
+  sudo apt install ffmpeg
+
+  # macOS
+  brew install ffmpeg
+  ```
 
 ## 1. Clone the repo
 
@@ -196,6 +204,8 @@ uv run ruff check revo_norm/     # lint
 | Issue | Fix |
 |-------|-----|
 | CUDA not detected | Run `bash scripts/install.sh` — re-detects and reinstalls correct torch |
+| `libnppicc.so.* not found` | Install FFmpeg: `sudo apt install ffmpeg`. Also ensure CUDA toolkit matches PyTorch index. |
+| `torchcodec` fails to load | Install FFmpeg, then re-run `bash scripts/install.sh`. CUDA 13 uses cu126 (cu130 not yet stable). |
 | `ModuleNotFoundError: omnivoice` | Run `uv sync` |
 | `ModuleNotFoundError: revo_norm` | Run `uv pip install revo-norm` (optional, text normalization) |
 | CUDA OOM | Lower `--max-concurrent` or use `--device cpu` |
