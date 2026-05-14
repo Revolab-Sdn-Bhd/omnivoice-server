@@ -34,8 +34,8 @@ class Settings(BaseSettings):
         description="HuggingFace repo ID or local path",
     )
     model_revision: str = Field(
-        # default="",
-        default="1f6f0e5cddca87e4f69cd3a32fbcd843f63148ac",
+        default="",
+        # default="79df7c44b6e4c96cc0bb72e39e860bd2ae984f59",
         description="Git revision (branch, tag, commit) to load from HuggingFace",
     )
     model_cache_dir: Path | None = Field(
@@ -109,6 +109,18 @@ class Settings(BaseSettings):
         description=(
             "Temperature for token sampling at each step. "
             "0=greedy, higher=more randomness."
+        ),
+    )
+    layer_penalty_factor: float = Field(
+        default=5.0,
+        ge=0.0,
+        description="Penalty factor applied across decoding layers. Higher = stronger penalty.",
+    )
+    preprocess_prompt: bool = Field(
+        default=False,
+        description=(
+            "Upstream text preprocessing before generation. "
+            "Disabled by default since the server already runs normalize_for_tts()."
         ),
     )
 
