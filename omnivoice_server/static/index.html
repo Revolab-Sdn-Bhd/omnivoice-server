@@ -835,8 +835,6 @@ async function streamGenerate() {
     const wsUrl = location.protocol.replace('http', 'ws') + '//' + location.host + '/tts/websocket';
     _streamLog(log, 'WS', 'Connecting to ' + wsUrl, '#888');
 
-    const p = _collectParams(text);
-
     const ws = new WebSocket(wsUrl);
     const pcmChunks = [];
     const ctxId = 'stream-' + Date.now();
