@@ -316,7 +316,10 @@ def _tensor_to_base64_float32(tensor) -> str:
     """Convert tensor to base64-encoded raw float32 PCM bytes."""
     import numpy as np
 
-    flat = tensor.squeeze(0).cpu().float().numpy()
+    if isinstance(tensor, np.ndarray):
+        flat = tensor.squeeze()
+    else:
+        flat = tensor.squeeze(0).cpu().float().numpy()
     return base64.b64encode(flat.astype(np.float32).tobytes()).decode("ascii")
 
 

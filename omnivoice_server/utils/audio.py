@@ -91,19 +91,31 @@ def tensors_to_wav_bytes(
     Concatenate multiple (1, T) tensors into a single WAV.
     Applies LUFS normalization.
     """
-    if len(tensors) == 1:
-        combined = tensors[0].cpu()
+    def _to_tensor(t):
+        if isinstance(t, torch.Tensor):
+            return t.cpu()
+        import numpy as np
+        return torch.from_numpy(t).float() if isinstance(t, np.ndarray) else torch.as_tensor(t).float()
+
+    converted = [_to_tensor(t) for t in tensors]
+    if len(converted) == 1:
+        combined = converted[0]
     else:
-        combined = torch.cat([t.cpu() for t in tensors], dim=-1)
+        combined = torch.cat(converted, dim=-1)
     combined = _postprocess(combined, target_lufs=target_lufs)
     return tensor_to_wav_bytes(combined)
 
 
-def tensor_to_pcm16_bytes(tensor: torch.Tensor) -> bytes:
+def tensor_to_pcm16_bytes(tensor) -> bytes:
     """
     Convert (1, T) float32 tensor to raw PCM int16 bytes.
     Used for streaming — no WAV header, continuous byte stream.
     """
+    import numpy as np
+
+    if isinstance(tensor, np.ndarray):
+        flat = tensor.squeeze().astype(np.float32)
+        return (flat * 32767).clip(-32768, 32767).astype(np.int16).tobytes()
     flat = tensor.squeeze(0).cpu()  # (T,)
     return (flat * 32767).clamp(-32768, 32767).to(torch.int16).numpy().tobytes()
 

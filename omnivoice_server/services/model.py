@@ -115,12 +115,21 @@ class ModelService:
 
     def _dtype_candidates(self) -> list:
         if self.cfg.device in ("cuda", "mps"):
-            return [torch.float16, torch.bfloat16, torch.float32]
+            return [torch.float32, torch.float16, torch.bfloat16]
         return [torch.float32]
 
     @staticmethod
     def _has_nan(tensors: list) -> bool:
-        return any(torch.isnan(t).any() for t in tensors)
+        import numpy as np
+
+        def _check(v):
+            if isinstance(v, torch.Tensor):
+                return torch.isnan(v).any().item()
+            if isinstance(v, np.ndarray):
+                return bool(np.isnan(v).any())
+            return False
+
+        return any(_check(t) for t in tensors)
 
     @property
     def model(self) -> OmniVoice:

@@ -27,7 +27,10 @@ def _tensor_to_base64_int16(tensor) -> str:
     """Convert tensor to base64-encoded int16 PCM bytes."""
     import numpy as np
 
-    flat = tensor.squeeze(0).cpu().float().numpy()
+    if isinstance(tensor, np.ndarray):
+        flat = tensor.squeeze().astype(np.float32)
+    else:
+        flat = tensor.squeeze(0).cpu().float().numpy()
     pcm = (flat * 32767).clip(-32768, 32767).astype(np.int16)
     return base64.b64encode(pcm.tobytes()).decode("ascii")
 
@@ -287,7 +290,10 @@ async def _process_transcript(
         )
 
         for tensor in result.tensors:
-            flat = tensor.squeeze(0).cpu().float().numpy()
+            if isinstance(tensor, np.ndarray):
+                flat = tensor.squeeze().astype(np.float32)
+            else:
+                flat = tensor.squeeze(0).cpu().float().numpy()
             pcm = (flat * 32767).clip(-32768, 32767).astype(np.int16)
             pcm_buffer.extend(pcm.tobytes())
 
