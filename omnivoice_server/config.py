@@ -21,6 +21,7 @@ class Settings(BaseSettings):
         env_prefix="OMNIVOICE_",
         env_file=".env",
         env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     # Server
@@ -251,6 +252,15 @@ class Settings(BaseSettings):
     trace_dir: Path = Field(
         default=Path("traces"),
         description="Save a copy of every generated audio + JSON metadata here for tracing.",
+    )
+
+    # Langfuse observability
+    langfuse_base_url: str = Field(
+        default="",
+        description=(
+            "Override Langfuse API host. "
+            "When empty, Langfuse SDK reads LANGFUSE_HOST from env automatically."
+        ),
     )
 
     # Backpressure

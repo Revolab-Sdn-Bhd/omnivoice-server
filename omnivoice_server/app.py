@@ -32,6 +32,11 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
+from .observability.tracer import (
+    flush_blocking,
+    get_langfuse_client,
+    join_background_flushes,
+)
 from .routers import generate, health, models, speech, voices, websocket
 from .services.inference import InferenceService, SynthesisRequest
 from .services.metrics import MetricsService
@@ -47,6 +52,19 @@ async def lifespan(app: FastAPI):
 
     # Startup config validation
     _validate_config(cfg)
+
+    # Initialize Langfuse tracing
+    langfuse = get_langfuse_client(
+        host=cfg.langfuse_base_url or None,
+    )
+    if langfuse:
+        try:
+            langfuse.auth_check()
+            logger.info("Langfuse connected and tracing enabled")
+        except Exception as e:
+            logger.warning("Langfuse auth failed: %s", e)
+    else:
+        logger.info("Langfuse not configured (missing credentials)")
 
     app.state.start_time = time.time()
     app.state.metrics_svc = MetricsService()
@@ -179,6 +197,12 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    if langfuse:
+        logger.info("Flushing Langfuse traces...")
+        flush_blocking()
+        join_background_flushes()
+        logger.info("Langfuse shutdown complete")
+
     if hasattr(app.state.inference_svc, "stop_batch_scheduler"):
         app.state.inference_svc.stop_batch_scheduler()
     if getattr(app.state, "executor", None):
