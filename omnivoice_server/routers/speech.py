@@ -237,13 +237,17 @@ async def create_speech(
     trace_output = build_synthesis_output(
         tensors=result.tensors,
         wav_bytes=wav_for_trace,
-        latency_s=elapsed,
+        latency_s=result.latency_s,
         text=body.input,
         voice=body.voice,
         mode="clone",
         speed=body.speed,
         device="cuda",
-        extra={"format": body.response_format},
+        extra={
+            "format": body.response_format,
+            "total_e2e_ms": round(elapsed * 1000, 2),
+            "inference_ms": round(result.latency_s * 1000, 2),
+        },
     )
     update_current_trace(output=trace_output)
 
