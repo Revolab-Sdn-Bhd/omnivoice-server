@@ -106,16 +106,13 @@ class ModelService:
             f"(+{ram_after - ram_before:.0f}MB)"
         )
 
-        # Apply post-load optimizations
-        self._apply_optimizations()
-
         self._resolve_revision_hash()
 
         self._loaded = True
 
     def _dtype_candidates(self) -> list:
         if self.cfg.device in ("cuda", "mps"):
-            return [torch.float32, torch.float16, torch.bfloat16]
+            return [torch.float16, torch.bfloat16, torch.float32]
         return [torch.float32]
 
     @staticmethod
@@ -161,64 +158,6 @@ class ModelService:
         except Exception as e:
             logger.debug(f"Could not resolve model revision hash: {e}")
 
-    def _apply_optimizations(self) -> None:
-        """Apply torch.compile and/or TorchAO quantization to the LLM backbone."""
-        if self._model is None:
-            return
-
-        # Quantization first (operates on raw weights)
-        if self.cfg.quantization != "none":
-            self._apply_quantization()
-
-        # Then torch.compile (works on quantized or normal model)
-        if self.cfg.compile_mode != "none":
-            self._apply_compile()
-
-    def _apply_quantization(self) -> None:
-        """Apply TorchAO quantization to the LLM backbone."""
-        from torchao.quantization import quantize_
-
-        configs = {
-            "fp8wo": "Float8WeightOnlyConfig",
-            "fp8dq": "Float8DynamicActivationFloat8WeightConfig",
-            "int8wo": "Int8WeightOnlyConfig",
-            "int8dq": "Int8DynamicActivationInt8WeightConfig",
-        }
-        import torchao.quantization as tq
-
-        cls_name = configs[self.cfg.quantization]
-        config_cls = getattr(tq, cls_name)
-        config = config_cls()
-
-        logger.info("Applying TorchAO quantization=%s to LLM backbone", self.cfg.quantization)
-        assert self._model is not None
-        quantize_(self._model.llm, config=config)
-        logger.info("Quantization applied")
-
-    def _apply_compile(self) -> None:
-        """Apply torch.compile to the LLM backbone."""
-        import os
-
-        # Set persistent cache dir so compiled kernels survive restarts
-        if self.cfg.compile_cache_dir is not None:
-            cache_dir = str(self.cfg.compile_cache_dir)
-            os.environ["TORCHINDUCTOR_CACHE_DIR"] = cache_dir
-            logger.info("Inductor cache dir: %s", cache_dir)
-
-        logger.info(
-            "Applying torch.compile(mode=%s) to LLM backbone", self.cfg.compile_mode
-        )
-        assert self._model is not None
-        compiled = torch.compile(self._model.llm, mode=self.cfg.compile_mode)
-        self._model.llm = compiled
-
-        cache_status = ""
-        if self.cfg.compile_cache_dir is not None:
-            cache_status = " (cached kernels will be reused if available)"
-        logger.info(
-            "torch.compile applied%s — first inference triggers compilation",
-            cache_status,
-        )
 
 
 def _get_ram_mb() -> float:
