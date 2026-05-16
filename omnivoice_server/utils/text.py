@@ -39,6 +39,20 @@ def punc_norm(text: str) -> str:
 
 
 
+_MALAY_WORDS = frozenset({
+    "sebelas", "dua", "tiga", "empat", "lima", "enam", "tujuh", "lapan",
+    "sembilan", "sepuluh", "seratus", "seribu", "ribu", "saya", "kita",
+    "ada", "itu", "ini", "dan", "yang", "di", "ke", "dari", "untuk",
+    "dengan", "tidak", "akan", "boleh", "ialah", "kod", "epal", "rumah",
+})
+
+
+def detect_language(text: str) -> str:
+    """Rule-based language detection. Returns 'ms' or 'en'."""
+    words = set(text.lower().split()) | set(re.findall(r"[a-zA-Z]+", text.lower()))
+    return "ms" if words & _MALAY_WORDS else "en"
+
+
 def normalize_for_tts(text: str, language: str = "en") -> str:
     """Normalize text for TTS using revo-norm + punc_norm."""
     try:

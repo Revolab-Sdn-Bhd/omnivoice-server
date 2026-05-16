@@ -95,12 +95,10 @@ class OmniVoiceAdapter:
 
     def build_kwargs(self, req: SynthesisRequest, model) -> dict:
         """Return kwargs dict ready to pass to model.generate()."""
-        from ..utils.text import normalize_for_tts
+        from ..utils.text import detect_language, normalize_for_tts
 
-        text = normalize_for_tts(
-            req.text,
-            language=req.language if req.language != "en" else None,
-        )
+        detected_lang = detect_language(req.text)
+        text = normalize_for_tts(req.text, language=detected_lang)
 
         num_step = req.num_step or self._cfg.num_step
         guidance_scale = (
@@ -141,10 +139,7 @@ class OmniVoiceAdapter:
             num_commas = text.count(",")
             kwargs["duration"] = req.duration + (num_commas * 0.5)
 
-        # Add optional language parameter if provided
-        if req.language is not None:
-            kwargs["language"] = req.language
-
+        # language=None for model — let omnivoice handle it natively
         kwargs["preprocess_prompt"] = (
             req.preprocess_prompt if req.preprocess_prompt is not None
             else self._cfg.preprocess_prompt

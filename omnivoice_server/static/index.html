@@ -348,14 +348,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
             <option value="quality">Quality</option>
           </select>
         </div>
-        <div class="inline-control">
-          <label>Language</label>
-          <select id="param-language">
-            <option value="auto">Auto-detect</option>
-            <option value="en">English</option>
-            <option value="ms">Malay</option>
-          </select>
-        </div>
         <button class="settings-btn" id="settings-toggle" onclick="toggleAdvanced()">
           <span style="font-size:14px">&#9881;</span>
           <span class="label">Settings</span>
@@ -816,7 +808,7 @@ function _speakerTags(s) {
 }
 
 const SOURCE_LABELS = { internal: 'Internal', seiyuu: 'Seiyuu', 'common-voice': 'Common Voice', nexdata: 'Nexdata' };
-const collapsedGroups = new Set();
+const expandedGroups = new Set();
 
 function renderSpeakers() {
   const el = document.getElementById('speaker-list');
@@ -854,14 +846,14 @@ function renderSpeakers() {
   sortedSources.forEach(src => {
     const items = groups[src];
     const label = SOURCE_LABELS[src] || src;
-    const collapsed = collapsedGroups.has(src);
+    const collapsed = !expandedGroups.has(src);
 
     const header = document.createElement('div');
     header.className = 'spk-group-header' + (collapsed ? ' collapsed' : '');
     header.innerHTML = `<span class="label">${label}</span><span class="count">${items.length}</span><span class="arrow">&#9660;</span>`;
     header.onclick = () => {
-      if (collapsedGroups.has(src)) collapsedGroups.delete(src);
-      else collapsedGroups.add(src);
+      if (expandedGroups.has(src)) expandedGroups.delete(src);
+      else expandedGroups.add(src);
       renderSpeakers();
     };
     el.appendChild(header);
@@ -1055,7 +1047,7 @@ async function generate() {
     const normPromise = fetch('/api/normalize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, language: _detectLang() }),
+      body: JSON.stringify({ text }),
     }).then(r => r.json()).then(data => {
       if (data.normalized && data.normalized !== text) {
         normContent.textContent = data.normalized;
@@ -1072,7 +1064,6 @@ async function generate() {
       text: p.text,
       voice_ref_path: p.voiceId !== 'anwar' || selectedSpeaker ? p.voiceId : undefined,
       instruct: p.instruct || undefined,
-      language: p.lang,
       temperature: p.classTemperature,
       target_lufs: _num('param-lufs', -23),
       duration: p.duration,
@@ -1183,7 +1174,7 @@ async function streamGenerate() {
     fetch('/api/normalize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, language: p.lang }),
+      body: JSON.stringify({ text }),
     }).then(r => r.json()).then(data => {
       const normEl = document.getElementById('normalized-text');
       const normContent = document.getElementById('normalized-text-content');
@@ -1210,7 +1201,6 @@ async function streamGenerate() {
           voice: { mode: 'id', id: p.voiceId },
           context_id: ctxId,
           continue: false,
-          language: p.lang,
           mode: p.mode,
           instruct: p.instruct,
           speed: p.speed,
@@ -1800,19 +1790,9 @@ function _numStepFromMode() {
   if (mode === 'normal') return 16;
   return 32;
 }
-function _detectLang() {
-  const sel = document.getElementById('param-language').value;
-  if (sel !== 'auto') return sel;
-  const s = speakers.find(v => v.id === selectedSpeaker);
-  const ld = s && s.language_detected;
-  if (ld === 'ms') return 'ms';
-  return 'en';
-}
-
 // Centralized param collection — single source of truth for Generate + Stream
 function _collectParams(text) {
   const speedMode = _numStepFromMode();
-  const lang = _detectLang();
   const duration = _getDuration();
 
   // Advanced params (null = use server default)
@@ -1833,7 +1813,7 @@ function _collectParams(text) {
   const voiceId = selectedSpeaker || 'anwar';
 
   return {
-    text, mode, instruct, voiceId, lang, speed, speedMode, duration,
+    text, mode, instruct, voiceId, speed, speedMode, duration,
     classTemperature, guidanceScale, tShift, posTemp, layerPenalty,
     denoise, preprocess, postprocess, chunkDur, chunkThresh,
   };
