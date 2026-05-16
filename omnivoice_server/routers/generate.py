@@ -20,6 +20,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..observability.tracer import (
+    build_synthesis_output,
+    get_langfuse_client,
+    is_enabled,
+    observe,
+    update_current_trace,
+)
 from ..services.inference import InferenceService, QueueFullError, SynthesisRequest
 from ..services.metrics import MetricsService
 from ..utils.audio import tensors_to_wav_bytes
@@ -327,6 +334,7 @@ def _tensor_to_base64_float32(tensor) -> str:
 
 
 @router.post("/generate", tags=["TTS"])
+@observe()
 async def generate(
     request: Request,
     body: TTSRequest,
@@ -335,6 +343,12 @@ async def generate(
     cfg=Depends(_get_cfg),
 ):
     """Run the full TTS pipeline and return a complete WAV file."""
+    update_current_trace(metadata={
+        "language": body.language,
+        "speed": body.speed,
+        "mode": "clone" if body.voice_ref_path else "design",
+    })
+
     if len(body.text) > 10_000:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -342,6 +356,12 @@ async def generate(
         )
 
     syn_req = _build_synthesis_req(body, cfg)
+
+    # Pass trace context for nested inference span
+    if is_enabled():
+        lc = get_langfuse_client()
+        if lc:
+            syn_req._trace_id = lc.get_current_trace_id()
 
     if syn_req.ref_audio_path:
         p = Path(syn_req.ref_audio_path)
@@ -358,12 +378,14 @@ async def generate(
         )
         metrics_svc.record_success(result.latency_s)
     except QueueFullError as e:
+        update_current_trace(metadata={"error": f"QueueFullError: {e}"})
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(e),
         )
     except asyncio.TimeoutError:
         metrics_svc.record_timeout()
+        update_current_trace(metadata={"error": f"TimeoutError: {cfg.request_timeout_s}s"})
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=f"Synthesis timed out after {cfg.request_timeout_s}s",
@@ -371,6 +393,7 @@ async def generate(
     except Exception as e:
         metrics_svc.record_error()
         logger.exception("Synthesis failed")
+        update_current_trace(metadata={"error": f"{type(e).__name__}: {e}"})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Synthesis failed: {e}",
@@ -379,6 +402,38 @@ async def generate(
     wav_bytes = tensors_to_wav_bytes(
         result.tensors, target_lufs=body.target_lufs,
     )
+
+    # Attach audio + metrics to root trace (following ChatterBox pattern)
+    mode = "clone" if body.voice_ref_path else "design"
+    trace_output = build_synthesis_output(
+        tensors=result.tensors,
+        wav_bytes=wav_bytes,
+        latency_s=result.latency_s,
+        text=body.text,
+        voice=body.voice_ref_path or "design",
+        mode=mode,
+        speed=body.speed,
+        extra={"target_lufs": body.target_lufs},
+    )
+    update_current_trace(output=trace_output)
+
+    # Slack notification (non-blocking, sampled)
+    from ..observability.slack_notifier import send_tts_notification
+
+    trace_id = None
+    if is_enabled():
+        lc = get_langfuse_client()
+        if lc:
+            trace_id = lc.get_current_trace_id()
+    send_tts_notification(
+        text=body.text,
+        voice=body.voice_ref_path or "design",
+        mode=mode,
+        endpoint="generate",
+        trace_output=trace_output,
+        trace_id=trace_id,
+    )
+
     return Response(
         content=wav_bytes,
         media_type="audio/wav",
@@ -398,6 +453,7 @@ async def generate(
 
 
 @router.post("/generate/stream", tags=["TTS"])
+@observe(capture_output=False)
 async def generate_stream(
     request: Request,
     body: TTSRequest,
@@ -406,14 +462,27 @@ async def generate_stream(
     cfg=Depends(_get_cfg),
 ):
     """Stream TTS audio as Server-Sent Events (SSE)."""
+    update_current_trace(metadata={
+        "language": body.language,
+        "speed": body.speed,
+        "mode": "clone" if body.voice_ref_path else "design",
+        "streaming": True,
+    })
+
     if len(body.text) > 10_000:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Text exceeds 10,000 characters",
         )
 
+    trace_id = None
+    if is_enabled():
+        lc = get_langfuse_client()
+        if lc:
+            trace_id = lc.get_current_trace_id()
+
     return StreamingResponse(
-        _stream_sse(body, inference_svc, metrics_svc, cfg),
+        _stream_sse(body, inference_svc, metrics_svc, cfg, trace_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -428,6 +497,7 @@ async def _stream_sse(
     inference_svc: InferenceService,
     metrics_svc: MetricsService,
     cfg,
+    trace_id: str | None = None,
 ) -> AsyncIterator[str]:
     """SSE generator yielding base64-encoded float32 PCM chunks."""
     sentences = split_sentences(body.text, max_chars=cfg.stream_chunk_max_chars)
@@ -463,6 +533,7 @@ async def _stream_sse(
             postprocess_output=base_req.postprocess_output,
             audio_chunk_duration=base_req.audio_chunk_duration,
             audio_chunk_threshold=base_req.audio_chunk_threshold,
+            _trace_id=trace_id,
         )
 
         try:

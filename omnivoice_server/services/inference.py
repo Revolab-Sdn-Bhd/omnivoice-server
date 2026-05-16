@@ -22,6 +22,17 @@ from dataclasses import dataclass
 import torch
 
 from ..config import Settings
+from ..observability.tracer import (
+    build_synthesis_input,
+    build_synthesis_output,
+    get_langfuse_client,
+    is_enabled,
+)
+
+try:
+    from langfuse.types import TraceContext
+except ImportError:
+    TraceContext = None
 from .model import ModelService
 
 logger = logging.getLogger(__name__)
@@ -54,6 +65,7 @@ class SynthesisRequest:
     postprocess_output: bool | None = None
     audio_chunk_duration: float | None = None
     audio_chunk_threshold: float | None = None
+    _trace_id: str | None = None  # Langfuse trace_id for nested span creation
 
 
 @dataclass
@@ -479,19 +491,67 @@ class InferenceService:
 
     def _run_sync(self, req: SynthesisRequest) -> SynthesisResult:
         """Blocking inference. Runs in thread pool thread."""
+        span = None
+        if is_enabled() and req._trace_id:
+            client = get_langfuse_client()
+            if client:
+                tc = TraceContext(trace_id=req._trace_id) if TraceContext else None
+                kwargs = dict(
+                    name="inference.synthesize",
+                    input=build_synthesis_input(
+                        text=req.text,
+                        voice=req.ref_audio_path or "design",
+                        mode=req.mode,
+                        speed=req.speed,
+                        num_step=req.num_step or self._cfg.num_step,
+                        guidance_scale=req.guidance_scale or self._cfg.guidance_scale,
+                        denoise=req.denoise,
+                        t_shift=req.t_shift,
+                        language=req.language,
+                    ),
+                )
+                if tc:
+                    kwargs["trace_context"] = tc
+                span = client.start_observation(**kwargs)
+
         t0 = time.monotonic()
         model = self._model_svc.model
 
         try:
             tensors = self._adapter.call(req, model)
+        except Exception as exc:
+            if span:
+                span.update(
+                    status="error",
+                    output={"error": f"{type(exc).__name__}: {exc}"},
+                )
+                span.end()
+            raise
         finally:
             if self._executor is not None:
                 _cleanup_memory(self._cfg.device)
 
         duration_s = sum(t.shape[-1] for t in tensors) / 24_000
         latency_s = time.monotonic() - t0
-
         rtf = latency_s / duration_s if duration_s > 0 else float("inf")
+
+        if span:
+            from ..utils.audio import tensors_to_wav_bytes
+
+            wav_bytes = tensors_to_wav_bytes(tensors)
+            span.update(output=build_synthesis_output(
+                tensors=tensors,
+                wav_bytes=wav_bytes,
+                latency_s=latency_s,
+                text=req.text,
+                voice=req.ref_audio_path or "design",
+                mode=req.mode,
+                speed=req.speed,
+                device=self._cfg.device,
+                extra={"num_tensors": len(tensors)},
+            ))
+            span.end()
+
         logger.debug(
             f"Synthesized {duration_s:.2f}s audio in {latency_s:.2f}s "
             f"(RTF={rtf:.3f})"

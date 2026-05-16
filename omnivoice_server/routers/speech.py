@@ -18,6 +18,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
+from ..observability.tracer import (
+    build_synthesis_output,
+    get_langfuse_client,
+    is_enabled,
+    observe,
+    update_current_trace,
+)
 from ..services.inference import InferenceService, QueueFullError, SynthesisRequest
 from ..services.metrics import MetricsService
 from ..utils.audio import encode_tensors, tensors_to_wav_bytes
@@ -128,6 +135,7 @@ async def list_audio_voices(cfg=Depends(_get_cfg)):
 
 
 @router.post("/audio/speech", tags=["OpenAI-compatible"])
+@observe(capture_output=False)
 async def create_speech(
     request: Request,
     body: OpenAISpeechRequest,
@@ -139,6 +147,13 @@ async def create_speech(
     """Generate speech from text. Supports streaming via ?stream=true."""
     client = request.client.host if request.client else "unknown"
     t0 = time.monotonic()
+
+    update_current_trace(metadata={
+        "voice": body.voice,
+        "format": body.response_format,
+        "stream": stream,
+        "language": body.language,
+    })
 
     if len(body.input) > 10_000:
         raise HTTPException(
@@ -160,8 +175,13 @@ async def create_speech(
     )
 
     if stream:
+        trace_id = None
+        if is_enabled():
+            lc = get_langfuse_client()
+            if lc:
+                trace_id = lc.get_current_trace_id()
         return StreamingResponse(
-            _stream_sse(body, inference_svc, metrics_svc, cfg, client, t0),
+            _stream_sse(body, inference_svc, metrics_svc, cfg, client, t0, trace_id),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -172,6 +192,12 @@ async def create_speech(
 
     syn_req = _build_synthesis_req(body, cfg)
 
+    # Pass trace context for nested inference span
+    if is_enabled():
+        lc = get_langfuse_client()
+        if lc:
+            syn_req._trace_id = lc.get_current_trace_id()
+
     try:
         timeout_s = cfg.request_timeout_s
         result = await asyncio.wait_for(
@@ -179,12 +205,14 @@ async def create_speech(
         )
         metrics_svc.record_success(result.latency_s)
     except QueueFullError as e:
+        update_current_trace(metadata={"error": f"QueueFullError: {e}"})
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(e),
         )
     except asyncio.TimeoutError:
         metrics_svc.record_timeout()
+        update_current_trace(metadata={"error": f"TimeoutError: {cfg.request_timeout_s}s"})
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=f"Synthesis timed out after {cfg.request_timeout_s}s",
@@ -192,6 +220,7 @@ async def create_speech(
     except Exception as e:
         metrics_svc.record_error()
         logger.exception("Synthesis failed")
+        update_current_trace(metadata={"error": f"{type(e).__name__}: {e}"})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Synthesis failed: {e}",
@@ -201,6 +230,38 @@ async def create_speech(
     logger.info(
         "[speech] client=%s voice=%s synthesis=%.3fs chars=%d",
         client, body.voice, elapsed, len(body.input),
+    )
+
+    # Attach audio + metrics to root trace (following ChatterBox pattern)
+    wav_for_trace = tensors_to_wav_bytes(result.tensors)
+    trace_output = build_synthesis_output(
+        tensors=result.tensors,
+        wav_bytes=wav_for_trace,
+        latency_s=elapsed,
+        text=body.input,
+        voice=body.voice,
+        mode="clone",
+        speed=body.speed,
+        device="cuda",
+        extra={"format": body.response_format},
+    )
+    update_current_trace(output=trace_output)
+
+    # Slack notification (non-blocking, sampled)
+    from ..observability.slack_notifier import send_tts_notification
+
+    trace_id = None
+    if is_enabled():
+        lc = get_langfuse_client()
+        if lc:
+            trace_id = lc.get_current_trace_id()
+    send_tts_notification(
+        text=body.input,
+        voice=body.voice,
+        mode="clone",
+        endpoint="v1/audio/speech",
+        trace_output=trace_output,
+        trace_id=trace_id,
     )
 
     if body.response_format == "wav":
@@ -223,6 +284,7 @@ async def _stream_sse(
     cfg,
     client: str,
     t0: float,
+    trace_id: str | None = None,
 ) -> AsyncIterator[str]:
     """SSE generator for streaming TTS."""
     from ..utils.text import split_sentences
@@ -254,6 +316,7 @@ async def _stream_sse(
             ref_text=base_req.ref_text,
             speed=base_req.speed,
             class_temperature=base_req.class_temperature,
+            _trace_id=trace_id,
         )
 
         try:

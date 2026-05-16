@@ -16,6 +16,12 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from ..observability.tracer import (
+    build_synthesis_input,
+    build_synthesis_output,
+    get_langfuse_client,
+    is_enabled,
+)
 from ..services.inference import SynthesisRequest
 from ..utils.text import split_sentences
 
@@ -234,6 +240,22 @@ async def _process_transcript(
     """Process a single transcript message: split sentences, synthesize, stream."""
     import numpy as np
 
+    span = None
+    if is_enabled():
+        client = get_langfuse_client()
+        if client:
+            span = client.start_observation(
+                name="websocket.tts",
+                input=build_synthesis_input(
+                    text=transcript,
+                    voice=voice_id,
+                    mode=mode,
+                    speed=speed,
+                    language=language if language != "en" else None,
+                ),
+                metadata={"ctx_id": ctx_id},
+            )
+
     cfg = ws.app.state.cfg
     inference_svc = ws.app.state.inference_svc
 
@@ -273,14 +295,24 @@ async def _process_transcript(
             postprocess_output=postprocess_output,
             audio_chunk_duration=audio_chunk_duration,
             audio_chunk_threshold=audio_chunk_threshold,
+            _trace_id=span.trace_id if span else None,
         )
 
         try:
             result = await inference_svc.synthesize(syn_req)
         except asyncio.CancelledError:
+            if span:
+                span.update(status="cancelled")
+                span.end()
             return
         except Exception as e:
             logger.exception("WebSocket synthesis failed")
+            if span:
+                span.update(
+                    status="error",
+                    output={"error": f"{type(e).__name__}: {e}"},
+                )
+                span.end()
             await _send_error(ws, str(e), ctx_id)
             return
 
@@ -315,6 +347,51 @@ async def _process_transcript(
         "[ws] ctx=%s ttfc=%.3fs total=%.3fs chunks=%d",
         ctx_id, time.monotonic() - t0, time.monotonic() - t0, chunk_idx,
     )
+
+    if span:
+        import numpy as np
+        import torch
+
+        total_s = time.monotonic() - t0
+
+        # Reconstruct tensor from pcm_buffer for quality metrics
+        pcm_np = np.frombuffer(bytes(pcm_buffer), dtype=np.int16).astype(np.float32) / 32767.0
+        recon_tensor = torch.from_numpy(pcm_np).unsqueeze(0)
+
+        # Convert to proper WAV bytes (with header) for Langfuse
+        from ..utils.audio import tensor_to_wav_bytes
+
+        wav_bytes = tensor_to_wav_bytes(recon_tensor)
+
+        trace_output = build_synthesis_output(
+            tensors=[recon_tensor],
+            wav_bytes=wav_bytes,
+            latency_s=total_s,
+            text=transcript,
+            voice=voice_id,
+            mode=mode,
+            speed=speed,
+            device="cuda" if torch.cuda.is_available() else "cpu",
+            extra={
+                "chunks_sent": chunk_idx,
+                "sentences": len(sentences),
+            },
+        )
+        span.update(output=trace_output)
+        span.end()
+
+        # Slack notification (non-blocking, sampled)
+        from ..observability.slack_notifier import send_tts_notification
+
+        trace_id = span.trace_id if span else None
+        send_tts_notification(
+            text=transcript,
+            voice=voice_id,
+            mode=mode,
+            endpoint="websocket",
+            trace_output=trace_output,
+            trace_id=trace_id,
+        )
 
 
 @router.get("/api/docs/websocket", tags=["Docs"])
