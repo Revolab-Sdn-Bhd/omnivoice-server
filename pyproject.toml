@@ -42,6 +42,7 @@ dependencies = [
     "json-repair>=0.59.5",
     "revo-norm",
     "langfuse>=2.0.0",
+    "torchao>=0.17.0",
 ]
 
 [project.urls]
