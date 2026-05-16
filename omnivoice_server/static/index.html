@@ -1656,7 +1656,7 @@ async function shareLink() {
     const data = await res.json();
     const shareUrl = data.url || (window.location.origin + '/share/' + data.share_id);
 
-    try { await navigator.clipboard.writeText(shareUrl); } catch { var ta=document.createElement("textarea"); ta.value=shareUrl; ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); }
+    await navigator.clipboard.writeText(shareUrl);
     showToast('Share link copied to clipboard');
   } catch (e) {
     alert('Share failed: ' + e.message);
