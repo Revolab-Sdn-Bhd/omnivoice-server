@@ -22,9 +22,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..observability.tracer import (
     build_synthesis_output,
-    get_langfuse_client,
-    is_enabled,
-    observe,
+    get_current_trace_id,
+    get_observe,
     update_current_trace,
 )
 from ..services.inference import InferenceService, QueueFullError, SynthesisRequest
@@ -334,7 +333,7 @@ def _tensor_to_base64_float32(tensor) -> str:
 
 
 @router.post("/generate", tags=["TTS"])
-@observe()
+@get_observe()(name="generate")
 async def generate(
     request: Request,
     body: TTSRequest,
@@ -358,10 +357,7 @@ async def generate(
     syn_req = _build_synthesis_req(body, cfg)
 
     # Pass trace context for nested inference span
-    if is_enabled():
-        lc = get_langfuse_client()
-        if lc:
-            syn_req._trace_id = lc.get_current_trace_id()
+    syn_req._trace_id = get_current_trace_id()
 
     if syn_req.ref_audio_path:
         p = Path(syn_req.ref_audio_path)
@@ -420,11 +416,7 @@ async def generate(
     # Slack notification (non-blocking, sampled)
     from ..observability.slack_notifier import send_tts_notification
 
-    trace_id = None
-    if is_enabled():
-        lc = get_langfuse_client()
-        if lc:
-            trace_id = lc.get_current_trace_id()
+    trace_id = get_current_trace_id()
     send_tts_notification(
         text=body.text,
         voice=body.voice_ref_path or "design",
@@ -453,7 +445,7 @@ async def generate(
 
 
 @router.post("/generate/stream", tags=["TTS"])
-@observe(capture_output=False)
+@get_observe()(name="generate_stream", capture_output=False)
 async def generate_stream(
     request: Request,
     body: TTSRequest,
@@ -475,11 +467,7 @@ async def generate_stream(
             detail="Text exceeds 10,000 characters",
         )
 
-    trace_id = None
-    if is_enabled():
-        lc = get_langfuse_client()
-        if lc:
-            trace_id = lc.get_current_trace_id()
+    trace_id = get_current_trace_id()
 
     return StreamingResponse(
         _stream_sse(body, inference_svc, metrics_svc, cfg, trace_id),

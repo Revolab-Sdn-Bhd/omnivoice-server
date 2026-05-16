@@ -10,11 +10,12 @@ Supports background flushing to avoid blocking user requests.
 from __future__ import annotations
 
 import base64
+import contextvars
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 
-from langfuse import Langfuse, observe
+from langfuse import Langfuse
 
 MAX_AUDIO_SIZE_BYTES = 10 * 1024 * 1024  # 10MB
 
@@ -70,6 +71,71 @@ def is_enabled() -> bool:
     if _langfuse_enabled is None:
         get_langfuse_client()
     return _langfuse_enabled or False
+
+
+def get_observe():
+    """Return a decorator factory that creates a Langfuse trace around handlers.
+
+    Defers client lookup to call-time so it works even when applied at
+    import-time (before lifespan initializes the client).
+    """
+
+    def _make_decorator(func=None, *, name=None, capture_output=True, **_kw):
+        import functools
+
+        def decorator(fn):
+            @functools.wraps(fn)
+            async def async_wrapper(*args, **kwargs):
+                client = get_langfuse_client()
+                if client is None:
+                    return await fn(*args, **kwargs)
+                trace_name = name or fn.__name__
+                span = client.start_observation(name=trace_name)
+                _current_trace.set(span)
+                try:
+                    result = await fn(*args, **kwargs)
+                    span.end()
+                    return result
+                except Exception as exc:
+                    span.update(status_message=str(exc))
+                    span.end()
+                    raise
+                finally:
+                    _current_trace.set(None)
+
+            @functools.wraps(fn)
+            def sync_wrapper(*args, **kwargs):
+                client = get_langfuse_client()
+                if client is None:
+                    return fn(*args, **kwargs)
+                trace_name = name or fn.__name__
+                span = client.start_observation(name=trace_name)
+                _current_trace.set(span)
+                try:
+                    return fn(*args, **kwargs)
+                finally:
+                    span.end()
+                    _current_trace.set(None)
+
+            import asyncio
+            if asyncio.iscoroutinefunction(fn):
+                return async_wrapper
+            return sync_wrapper
+
+        if func is not None:
+            return decorator(func)
+        return decorator
+
+    return _make_decorator
+
+
+_current_trace = contextvars.ContextVar("omnivoice_trace", default=None)
+
+
+def get_current_trace_id() -> str | None:
+    """Get the current request's trace ID (set by get_observe wrapper)."""
+    trace = _current_trace.get()
+    return trace.trace_id if trace else None
 
 
 def flush_in_background() -> None:
@@ -133,11 +199,9 @@ def join_background_flushes() -> None:
 
 
 def update_current_trace(*, metadata: dict | None = None, output: dict | None = None) -> None:
-    """Update the current observation with metadata and/or output (e.g. audio)."""
-    if not is_enabled():
-        return
-    client = get_langfuse_client()
-    if client is None:
+    """Update the current request trace with metadata and/or output."""
+    trace = _current_trace.get()
+    if trace is None:
         return
     try:
         kwargs = {}
@@ -146,7 +210,7 @@ def update_current_trace(*, metadata: dict | None = None, output: dict | None = 
         if output is not None:
             kwargs["output"] = output
         if kwargs:
-            client.update_current_span(**kwargs)
+            trace.update(**kwargs)
     except Exception as e:
         logger.warning("Could not update current trace: %s", e)
 
@@ -393,8 +457,9 @@ def build_synthesis_output(
 
 __all__ = [
     "get_langfuse_client",
+    "get_current_trace_id",
+    "get_observe",
     "is_enabled",
-    "observe",
     "update_current_trace",
     "create_audio_data_uri_from_bytes",
     "build_synthesis_input",

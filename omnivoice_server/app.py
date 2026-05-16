@@ -34,7 +34,9 @@ from fastapi.staticfiles import StaticFiles
 from .config import Settings
 from .observability.tracer import (
     flush_blocking,
+    flush_in_background,
     get_langfuse_client,
+    is_enabled,
     join_background_flushes,
 )
 from .routers import generate, health, models, speech, voices, websocket
@@ -370,6 +372,8 @@ def create_app(cfg: Settings) -> FastAPI:
         )
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
+        if is_enabled():
+            flush_in_background()
         return response
 
     # ── Auth middleware ───────────────────────────────────────────────────────

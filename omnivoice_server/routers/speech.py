@@ -20,9 +20,8 @@ from pydantic import BaseModel, Field
 
 from ..observability.tracer import (
     build_synthesis_output,
-    get_langfuse_client,
-    is_enabled,
-    observe,
+    get_current_trace_id,
+    get_observe,
     update_current_trace,
 )
 from ..services.inference import InferenceService, QueueFullError, SynthesisRequest
@@ -135,7 +134,7 @@ async def list_audio_voices(cfg=Depends(_get_cfg)):
 
 
 @router.post("/audio/speech", tags=["OpenAI-compatible"])
-@observe(capture_output=False)
+@get_observe()(capture_output=False)
 async def create_speech(
     request: Request,
     body: OpenAISpeechRequest,
@@ -175,11 +174,7 @@ async def create_speech(
     )
 
     if stream:
-        trace_id = None
-        if is_enabled():
-            lc = get_langfuse_client()
-            if lc:
-                trace_id = lc.get_current_trace_id()
+        trace_id = get_current_trace_id()
         return StreamingResponse(
             _stream_sse(body, inference_svc, metrics_svc, cfg, client, t0, trace_id),
             media_type="text/event-stream",
@@ -193,10 +188,7 @@ async def create_speech(
     syn_req = _build_synthesis_req(body, cfg)
 
     # Pass trace context for nested inference span
-    if is_enabled():
-        lc = get_langfuse_client()
-        if lc:
-            syn_req._trace_id = lc.get_current_trace_id()
+    syn_req._trace_id = get_current_trace_id()
 
     try:
         timeout_s = cfg.request_timeout_s
@@ -254,11 +246,7 @@ async def create_speech(
     # Slack notification (non-blocking, sampled)
     from ..observability.slack_notifier import send_tts_notification
 
-    trace_id = None
-    if is_enabled():
-        lc = get_langfuse_client()
-        if lc:
-            trace_id = lc.get_current_trace_id()
+    trace_id = get_current_trace_id()
     send_tts_notification(
         text=body.input,
         voice=body.voice,
