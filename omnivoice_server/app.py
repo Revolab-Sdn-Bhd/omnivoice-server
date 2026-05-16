@@ -183,14 +183,35 @@ async def lifespan(app: FastAPI):
         else:
             logger.info("Batching disabled, using single-request mode")
 
-        # Warmup to prime CUDA kernels
+        # Warmup to prime CUDA kernels (uses a real voice to warm clone path)
         try:
             warmup_text = "Warmup inference for CUDA kernel compilation."
+            warmup_voice = None
+            warmup_ref_text = "Warmup reference text."
+            if cfg.voices_dir and cfg.voices_dir.is_dir():
+                import json as _json
+                for _wav in sorted(cfg.voices_dir.glob("*.wav"))[:1]:
+                    _meta = cfg.voices_dir / (_wav.stem + ".meta.json")
+                    _txt = cfg.voices_dir / (_wav.stem + ".txt")
+                    if _meta.exists():
+                        try:
+                            warmup_ref_text = _json.loads(_meta.read_text()).get("transcript", warmup_ref_text)
+                        except Exception:
+                            pass
+                    elif _txt.exists():
+                        warmup_ref_text = _txt.read_text().strip().split("\n")[0] or warmup_ref_text
+                    warmup_voice = str(_wav)
+                    break
             for _ in range(3):
-                await app.state.inference_svc.synthesize(
-                    SynthesisRequest(text=warmup_text, mode="auto")
-                )
-            logger.info("Warmup complete")
+                if warmup_voice:
+                    await app.state.inference_svc.synthesize(
+                        SynthesisRequest(text=warmup_text, mode="clone", ref_audio_path=warmup_voice, ref_text=warmup_ref_text)
+                    )
+                else:
+                    await app.state.inference_svc.synthesize(
+                        SynthesisRequest(text=warmup_text, mode="auto")
+                    )
+            logger.info("Warmup complete (clone mode=%s)", warmup_voice is not None)
         except Exception:
             logger.warning("Warmup encountered errors (non-fatal)")
 
