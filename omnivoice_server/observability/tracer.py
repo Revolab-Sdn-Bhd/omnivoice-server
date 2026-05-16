@@ -386,6 +386,13 @@ def build_synthesis_output(
     rtf = latency_s / duration_s if duration_s > 0 else float("inf")
     throughput = chunks_succeeded / latency_s if latency_s > 0 else 0
 
+    # Normalize text for display (shows what the model actually spoke)
+    try:
+        from ..utils.text import normalize_for_tts
+        normalized_text = normalize_for_tts(text)
+    except Exception:
+        normalized_text = text
+
     # Duration outlier detection (following ChatterBox pattern)
     text_length = len(text)
     expected_duration_s = text_length * 0.08
@@ -411,7 +418,8 @@ def build_synthesis_output(
     output: dict = {
         "audio": create_audio_data_uri_from_bytes(wav_bytes),
         "file_size_bytes": len(wav_bytes),
-        "normalized_text": text[:2000],
+        "normalized_text": normalized_text[:2000],
+        "original_text": text[:2000],
         "status": "completed",
         # Performance metrics
         "performance": {
