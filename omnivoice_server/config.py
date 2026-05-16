@@ -53,7 +53,7 @@ class Settings(BaseSettings):
 
     # Optimization
     compile_mode: Literal["none", "default", "reduce-overhead", "max-autotune"] = Field(
-        default="none",
+        default="reduce-overhead",
         description=(
             "torch.compile mode for LLM backbone. "
             "'none'=disabled, 'max-autotune'=best perf but slow first compile."
@@ -68,7 +68,7 @@ class Settings(BaseSettings):
         ),
     )
     quantization: Literal["none", "fp8wo", "fp8dq", "int8wo", "int8dq"] = Field(
-        default="none",
+        default="fp8wo",
         description=(
             "TorchAO quantization for LLM backbone. "
             "fp8wo=FP8 weight-only, int8wo=INT8 weight-only. "
