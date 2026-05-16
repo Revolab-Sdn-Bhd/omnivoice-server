@@ -46,32 +46,24 @@ def normalize_loudness(
 
 
 def tensor_to_wav_bytes(tensor: torch.Tensor) -> bytes:
-    """
-    Convert (1, T) float32 tensor to 16-bit PCM WAV bytes.
-    """
+    """Convert (1, T) float32 tensor to 16-bit PCM WAV bytes via stdlib wave."""
+    import struct
+    import wave
+
     cpu_tensor = tensor.cpu()
     if cpu_tensor.dim() == 1:
         cpu_tensor = cpu_tensor.unsqueeze(0)
 
-    import tempfile
+    pcm = (cpu_tensor.squeeze(0).clamp(-1.0, 1.0) * 32767).to(torch.int16)
+    raw_bytes = struct.pack(f"<{pcm.numel()}h", *pcm.tolist())
 
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp_path = tmp.name
-    try:
-        torchaudio.save(
-            tmp_path,
-            cpu_tensor,
-            SAMPLE_RATE,
-            format="wav",
-            encoding="PCM_S",
-            bits_per_sample=16,
-        )
-        with open(tmp_path, "rb") as f:
-            return f.read()
-    finally:
-        import os
-
-        os.unlink(tmp_path)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(raw_bytes)
+    return buf.getvalue()
 
 
 def _postprocess(
