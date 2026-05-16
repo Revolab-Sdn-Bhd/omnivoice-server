@@ -138,7 +138,8 @@ class OmniVoiceAdapter:
 
         # Add optional duration parameter if provided
         if req.duration is not None:
-            kwargs["duration"] = req.duration
+            num_commas = text.count(",")
+            kwargs["duration"] = req.duration + (num_commas * 0.5)
 
         # Add optional language parameter if provided
         if req.language is not None:

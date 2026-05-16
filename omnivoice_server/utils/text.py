@@ -38,12 +38,14 @@ def punc_norm(text: str) -> str:
     return " ".join(text.split())
 
 
+
 def normalize_for_tts(text: str, language: str = "en") -> str:
     """Normalize text for TTS using revo-norm + punc_norm."""
     try:
-        from revo_norm import normalize_text
+        from revo_norm import add_random_commas, normalize_text
         norm_lang = "ms" if language in ("ms", "mixed") else "en"
         text = normalize_text(text, language=norm_lang)
+        text = add_random_commas(text)
     except ImportError:
         logger.debug("revo_norm not installed, skipping text normalization")
     except Exception:
