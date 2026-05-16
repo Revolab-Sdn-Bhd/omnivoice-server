@@ -6,6 +6,8 @@ All shared state lives on app.state — no module-level globals.
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import logging
 import os
 import time
@@ -385,7 +387,13 @@ def create_app(cfg: Settings) -> FastAPI:
             if request.url.path in (
                 "/health", "/",
                 "/v1/models", "/v1/audio/voices",
-            ) or request.url.path.startswith("/static/"):
+            ) or (
+                request.url.path.startswith("/static/")
+                or request.url.path.startswith("/share/")
+                or request.url.path == "/api/share"
+                or request.url.path.startswith("/api/history")
+                or request.url.path.startswith("/api/stats")
+            ):
                 return await call_next(request)
             auth = request.headers.get("Authorization", "")
             if auth != f"Bearer {cfg.api_key}":
@@ -448,6 +456,523 @@ def create_app(cfg: Settings) -> FastAPI:
 
     # WebSocket
     app.include_router(websocket.router)
+
+    # ── Share endpoints ──────────────────────────────────────────────────────
+
+    @app.post("/api/share", include_in_schema=False)
+    async def create_share(request: Request):
+        """Save generated audio + metadata and return a shareable link."""
+        body = await request.json()
+        audio_b64 = body.get("audio_base64")
+        text = body.get("text", "")
+        speaker_name = body.get("speaker_name", "")
+        fmt = body.get("format", "wav")
+        created_at = body.get("created_at", "")
+
+        if not audio_b64:
+            raise HTTPException(status_code=400, detail="audio_base64 is required")
+
+        shared_dir: Path = cfg.profile_dir / "shared"
+        shared_dir.mkdir(parents=True, exist_ok=True)
+
+        share_id = uuid.uuid4().hex[:12]
+
+        # Save audio file
+        audio_bytes = base64.b64decode(audio_b64)
+        audio_path = shared_dir / f"{share_id}.{fmt}"
+        audio_path.write_bytes(audio_bytes)
+
+        # Save metadata
+        duration = body.get("duration", 0.0)
+        meta = {
+            "text": text,
+            "speaker_name": speaker_name,
+            "format": fmt,
+            "created_at": created_at,
+            "duration": duration,
+        }
+        meta_path = shared_dir / f"{share_id}.meta.json"
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False))
+
+        share_url = str(request.url_for("get_share_page", share_id=share_id))
+        return {"share_id": share_id, "url": share_url}
+
+    @app.get(
+        "/share/{share_id}",
+        response_class=HTMLResponse,
+        include_in_schema=False,
+        name="get_share_page",
+    )
+    async def get_share_page(share_id: str):
+        """Serve a minimal mobile-friendly audio player page."""
+        shared_dir: Path = cfg.profile_dir / "shared"
+        meta_path = shared_dir / f"{share_id}.meta.json"
+
+        # Find audio file (could be wav/mp3/opus)
+        audio_file = None
+        for ext in ("wav", "mp3", "opus"):
+            candidate = shared_dir / f"{share_id}.{ext}"
+            if candidate.exists():
+                audio_file = candidate
+                break
+
+        if not audio_file or not meta_path.exists():
+            raise HTTPException(status_code=404, detail="Share not found")
+
+        meta = json.loads(meta_path.read_text())
+        text = meta.get("text", "")
+        speaker_name = meta.get("speaker_name", "")
+        audio_url = f"/share/{share_id}/audio"
+        audio_fmt = meta.get("format", "wav")
+        dl_name = f"{speaker_name}.{audio_fmt}"
+        duration = meta.get("duration", 0.0)
+
+        # Increment view counter
+        try:
+            meta["views"] = meta.get("views", 0) + 1
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False))
+        except Exception:
+            pass
+
+        views_count = meta.get("views", 0)
+        created_date = meta.get("created_at", "")
+
+        # Format duration as m:ss
+        dur_m = int(duration) // 60
+        dur_s = int(duration) % 60
+        dur_str = f"{dur_m}:{dur_s:02d}"
+
+        # Format created_at as "Generated MMM D, YYYY"
+        date_str = ""
+        if created_date:
+            try:
+                from datetime import datetime as _dt
+                dt = _dt.fromisoformat(created_date.replace("Z", "+00:00"))
+                date_str = dt.strftime("Generated %b %-d, %Y")
+            except Exception:
+                date_str = f"Generated {created_date[:10]}"
+
+        # Truncated text for OG description
+        og_desc = (text[:100] + "..." if len(text) > 100 else text) if text else "Shared audio"
+
+        # Audio MIME type
+        audio_mime = {"wav": "audio/wav", "mp3": "audio/mpeg", "opus": "audio/ogg"}.get(audio_fmt, "audio/wav")
+
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>{speaker_name} — Revolab</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
+<meta property="og:title" content="{speaker_name} — Revolab">
+<meta property="og:description" content="{og_desc}">
+<meta property="og:type" content="music.song">
+<meta property="og:audio" content="{audio_url}">
+<meta property="og:audio:type" content="{audio_mime}">
+<meta property="og:site_name" content="Revolab">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="{speaker_name} — Revolab">
+<meta name="twitter:description" content="{og_desc}">
+<style>
+  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  html {{ height: 100%; }}
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0a0a0a;
+    color: #e0e0e0;
+    min-height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+  }}
+  .container {{
+    width: 100%;
+    max-width: 480px;
+    text-align: center;
+  }}
+  .speaker-name {{
+    font-size: 18px;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }}
+  .speaker-icon {{ font-size: 22px; }}
+  .spoken-text {{
+    font-size: 15px;
+    line-height: 1.6;
+    color: #aaa;
+    margin-bottom: 6px;
+    padding: 0 8px;
+    font-style: italic;
+  }}
+  .created-date {{
+    font-size: 12px;
+    color: #555;
+    margin-bottom: 28px;
+    margin-top: 4px;
+  }}
+  .duration-badge {{
+    display: inline-block;
+    font-size: 13px;
+    color: #aaa;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 4px 14px;
+    margin-bottom: 16px;
+    font-variant-numeric: tabular-nums;
+  }}
+  #waveform {{
+    width: 100%;
+    height: 80px;
+    margin-bottom: 8px;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #111;
+  }}
+  .controls {{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    margin-bottom: 28px;
+  }}
+  .play-btn {{
+    width: 56px;
+    height: 56px;
+    min-width: 48px;
+    min-height: 48px;
+    border-radius: 50%;
+    border: 2px solid #333;
+    background: #1a1a1a;
+    color: #fff;
+    font-size: 22px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+  }}
+  .play-btn:hover {{ border-color: #555; background: #222; }}
+  .play-btn:active {{ transform: scale(0.95); }}
+  .time-display {{
+    font-size: 13px;
+    color: #888;
+    font-variant-numeric: tabular-nums;
+    min-width: 90px;
+  }}
+  .btn-row {{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }}
+  .download-btn, .copy-btn {{
+    display: inline-block;
+    padding: 12px 28px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    color: #ccc;
+    font-size: 14px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }}
+  .download-btn:hover, .copy-btn:hover {{ border-color: #555; color: #fff; background: #222; }}
+  .download-btn:active, .copy-btn:active {{ transform: scale(0.97); }}
+  .cta-link {{
+    display: inline-block;
+    margin-top: 16px;
+    font-size: 13px;
+    color: #666;
+    text-decoration: none;
+    transition: color 0.2s ease;
+  }}
+  .cta-link:hover {{ color: #999; }}
+  .branding {{
+    margin-top: 36px;
+    font-size: 12px;
+    color: #555;
+  }}
+  .branding a {{ color: #666; text-decoration: none; }}
+  .branding a:hover {{ color: #888; }}
+  .loading {{ color: #555; font-size: 14px; padding: 40px 0; }}
+  @keyframes fadeIn {{
+    from {{ opacity: 0; transform: translateY(8px); }}
+    to {{ opacity: 1; transform: translateY(0); }}
+  }}
+  .container > * {{
+    animation: fadeIn 0.4s ease forwards;
+  }}
+  .container > *:nth-child(2) {{ animation-delay: 0.05s; }}
+  .container > *:nth-child(3) {{ animation-delay: 0.1s; }}
+  .container > *:nth-child(4) {{ animation-delay: 0.15s; }}
+  .container > *:nth-child(5) {{ animation-delay: 0.2s; }}
+  .container > *:nth-child(6) {{ animation-delay: 0.25s; }}
+  .container > *:nth-child(7) {{ animation-delay: 0.3s; }}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="speaker-name"><span class="speaker-icon">&#127908;</span> {speaker_name}</div>
+  <div class="spoken-text">&ldquo;{text}&rdquo;</div>
+  <div class="created-date">{date_str}{' &middot; ' + str(views_count) + ' views' if views_count else ''}</div>
+  <div class="duration-badge">{dur_str}</div>
+  <div id="waveform"></div>
+  <div class="controls">
+    <button class="play-btn" id="playBtn">&#9654;</button>
+    <span class="time-display" id="timeDisplay">0:00 / 0:00</span>
+  </div>
+  <div class="btn-row">
+    <a class="download-btn" href="{audio_url}" download="{dl_name}">&#11015;&nbsp; Download</a>
+    <button class="copy-btn" onclick="copyLink()">&#128279; Copy Link</button>
+  </div>
+  <a class="cta-link" href="/">Try Revolab &rarr;</a>
+  <div class="branding">Powered by <a href="/">Revolab</a></div>
+</div>
+<script src="https://unpkg.com/wavesurfer.js@7"></script>
+<script>
+function copyLink() {{
+  navigator.clipboard.writeText(window.location.href);
+  var btn = document.querySelector('.copy-btn');
+  btn.textContent = '✓ Copied!';
+  setTimeout(function() {{ btn.innerHTML = '&#128279; Copy Link'; }}, 2000);
+}}
+(function() {{
+  var playBtn = document.getElementById('playBtn');
+  var timeDisplay = document.getElementById('timeDisplay');
+
+  function formatTime(sec) {{
+    var m = Math.floor(sec / 60);
+    var s = Math.floor(sec % 60);
+    return m + ':' + String(s).padStart(2, '0');
+  }}
+
+  var ws = WaveSurfer.create({{
+    container: '#waveform',
+    waveColor: '#444',
+    progressColor: '#888',
+    cursorColor: '#aaa',
+    height: 80,
+    barWidth: 2,
+    barGap: 1,
+    barRadius: 2,
+    url: '{audio_url}',
+  }});
+
+  var isPlaying = false;
+
+  ws.on('ready', function() {{
+    timeDisplay.textContent = '0:00 / ' + formatTime(ws.getDuration());
+  }});
+
+  ws.on('audioprocess', function() {{
+    var ct = formatTime(ws.getCurrentTime());
+    var dur = formatTime(ws.getDuration());
+    timeDisplay.textContent = ct + ' / ' + dur;
+  }});
+
+  ws.on('seeking', function() {{
+    var ct = formatTime(ws.getCurrentTime());
+    var dur = formatTime(ws.getDuration());
+    timeDisplay.textContent = ct + ' / ' + dur;
+  }});
+
+  ws.on('play', function() {{
+    isPlaying = true;
+    playBtn.innerHTML = '&#9646;&#9646;';
+  }});
+
+  ws.on('pause', function() {{
+    isPlaying = false;
+    playBtn.innerHTML = '&#9654;';
+  }});
+
+  ws.on('finish', function() {{
+    isPlaying = false;
+    playBtn.innerHTML = '&#9654;';
+  }});
+
+  playBtn.addEventListener('click', function() {{
+    ws.playPause();
+  }});
+}})();
+</script>
+</body>
+</html>"""
+        return HTMLResponse(content=html)
+
+    @app.get("/share/{share_id}/audio", include_in_schema=False)
+    async def get_share_audio(share_id: str):
+        """Serve the raw audio file for a shared clip."""
+        shared_dir: Path = cfg.profile_dir / "shared"
+
+        for ext in ("wav", "mp3", "opus"):
+            candidate = shared_dir / f"{share_id}.{ext}"
+            if candidate.exists():
+                from starlette.responses import FileResponse
+
+                mime_map = {"wav": "audio/wav", "mp3": "audio/mpeg", "opus": "audio/opus"}
+                return FileResponse(
+                    str(candidate),
+                    media_type=mime_map.get(ext, "application/octet-stream"),
+                    headers={"Cache-Control": "public, max-age=86400"},
+                )
+
+        raise HTTPException(status_code=404, detail="Audio not found")
+
+    # ── Speaker stats helper ──────────────────────────────────────────────────
+
+    def _increment_speaker_stats(speaker_name: str):
+        """Increment usage counter for a speaker in the stats file."""
+        stats_dir: Path = cfg.profile_dir / "stats"
+        stats_dir.mkdir(parents=True, exist_ok=True)
+        stats_path = stats_dir / "speaker_usage.json"
+        try:
+            if stats_path.exists():
+                stats = json.loads(stats_path.read_text())
+            else:
+                stats = {}
+            stats[speaker_name] = stats.get(speaker_name, 0) + 1
+            stats_path.write_text(json.dumps(stats, ensure_ascii=False))
+        except Exception:
+            pass
+
+    # ── Speaker stats endpoint ────────────────────────────────────────────────
+
+    @app.get("/api/stats/speakers", include_in_schema=False)
+    async def get_speaker_stats():
+        """Return usage counts per speaker."""
+        stats_dir: Path = cfg.profile_dir / "stats"
+        stats_path = stats_dir / "speaker_usage.json"
+        if not stats_path.exists():
+            return {"stats": {}}
+        try:
+            stats = json.loads(stats_path.read_text())
+            return {"stats": stats}
+        except Exception:
+            return {"stats": {}}
+
+    # ── History endpoints ─────────────────────────────────────────────────────
+
+    @app.post("/api/history", include_in_schema=False)
+    async def create_history_entry(request: Request):
+        """Save a generated audio to persistent history."""
+        body = await request.json()
+        audio_b64 = body.get("audio_base64")
+        text = body.get("text", "")
+        speaker_name = body.get("speaker_name", "")
+        fmt = body.get("format", "wav")
+        created_at = body.get("created_at", "")
+        version = body.get("version", 0)
+        duration = body.get("duration", 0.0)
+
+        if not audio_b64:
+            raise HTTPException(status_code=400, detail="audio_base64 is required")
+
+        history_dir: Path = cfg.profile_dir / "history"
+        history_dir.mkdir(parents=True, exist_ok=True)
+
+        entry_id = uuid.uuid4().hex[:12]
+
+        # Save audio file
+        audio_bytes = base64.b64decode(audio_b64)
+        audio_path = history_dir / f"{entry_id}.{fmt}"
+        audio_path.write_bytes(audio_bytes)
+
+        # Save metadata
+        meta = {
+            "id": entry_id,
+            "text": text,
+            "speaker_name": speaker_name,
+            "format": fmt,
+            "created_at": created_at,
+            "version": version,
+            "duration": duration,
+        }
+        meta_path = history_dir / f"{entry_id}.meta.json"
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False))
+
+        _increment_speaker_stats(speaker_name)
+
+        return {"id": entry_id, "saved": True}
+
+    @app.get("/api/history", include_in_schema=False)
+    async def list_history_entries():
+        """List all history entries sorted by created_at descending."""
+        history_dir: Path = cfg.profile_dir / "history"
+        if not history_dir.exists():
+            return {"entries": []}
+
+        entries = []
+        for meta_path in history_dir.glob("*.meta.json"):
+            try:
+                meta = json.loads(meta_path.read_text())
+                entries.append({
+                    "id": meta.get("id", meta_path.stem),
+                    "text": meta.get("text", ""),
+                    "speaker_name": meta.get("speaker_name", ""),
+                    "format": meta.get("format", "wav"),
+                    "created_at": meta.get("created_at", ""),
+                    "version": meta.get("version", 0),
+                    "duration": meta.get("duration", 0.0),
+                })
+            except Exception:
+                logger.warning("Failed to read history meta: %s", meta_path)
+
+        entries.sort(key=lambda e: e.get("created_at", ""), reverse=True)
+        return {"entries": entries}
+
+    @app.get("/api/history/{entry_id}/audio", include_in_schema=False)
+    async def get_history_audio(entry_id: str):
+        """Serve the raw audio file for a history entry."""
+        history_dir: Path = cfg.profile_dir / "history"
+
+        for ext in ("wav", "mp3", "opus"):
+            candidate = history_dir / f"{entry_id}.{ext}"
+            if candidate.exists():
+                from starlette.responses import FileResponse
+
+                mime_map = {"wav": "audio/wav", "mp3": "audio/mpeg", "opus": "audio/opus"}
+                return FileResponse(
+                    str(candidate),
+                    media_type=mime_map.get(ext, "application/octet-stream"),
+                    headers={"Cache-Control": "public, max-age=3600"},
+                )
+
+        raise HTTPException(status_code=404, detail="Audio not found")
+
+    @app.delete("/api/history/{entry_id}", include_in_schema=False)
+    async def delete_history_entry(entry_id: str):
+        """Delete a history entry (audio + metadata)."""
+        history_dir: Path = cfg.profile_dir / "history"
+        deleted = False
+
+        # Delete audio file(s)
+        for ext in ("wav", "mp3", "opus"):
+            candidate = history_dir / f"{entry_id}.{ext}"
+            if candidate.exists():
+                candidate.unlink()
+                deleted = True
+
+        # Delete metadata
+        meta_path = history_dir / f"{entry_id}.meta.json"
+        if meta_path.exists():
+            meta_path.unlink()
+            deleted = True
+
+        if not deleted:
+            raise HTTPException(status_code=404, detail="History entry not found")
+
+        return {"deleted": True}
 
     # ── Frontend ──────────────────────────────────────────────────────────────
     import pathlib
