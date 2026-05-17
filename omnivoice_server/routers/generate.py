@@ -9,12 +9,9 @@ and map them to OmniVoice's SynthesisRequest internally.
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
-import tempfile
 from collections.abc import AsyncIterator
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response, StreamingResponse
@@ -30,6 +27,19 @@ from ..services.inference import InferenceService, QueueFullError, SynthesisRequ
 from ..services.metrics import MetricsService
 from ..utils.audio import tensors_to_wav_bytes
 from ..utils.text import split_sentences
+from ._shared import (  # noqa: I001
+    build_synthesis_request,
+    tensor_to_base64_float32,
+)
+from ._shared import (
+    get_cfg as _get_cfg,
+)
+from ._shared import (
+    get_inference_svc as _get_inference,
+)
+from ._shared import (
+    get_metrics_svc as _get_metrics,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -223,112 +233,6 @@ class TTSRequest(BaseModel):
     )
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-
-def _get_inference(request: Request) -> InferenceService:
-    return request.app.state.inference_svc
-
-
-def _get_metrics(request: Request) -> MetricsService:
-    return request.app.state.metrics_svc
-
-
-def _get_cfg(request: Request):
-    return request.app.state.cfg
-
-
-def _resolve_voice_path(
-    voice_ref_path: str | None,
-    voice_ref_audio: str | None,
-    cfg,
-) -> tuple[str | None, str | None]:
-    """Resolve voice reference to (audio_path, ref_text).
-
-    Returns (temp_file_path_or_real_path, ref_text_or_empty).
-    If voice_ref_audio is provided, decodes base64 and writes to temp file.
-    """
-    if voice_ref_audio:
-        raw = base64.b64decode(voice_ref_audio)
-        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        tmp.write(raw)
-        tmp.close()
-        return tmp.name, ""
-
-    if voice_ref_path:
-        p = Path(voice_ref_path)
-        # If just a stem like "anwar", resolve to voices/anwar.wav
-        if not p.is_file() and not p.suffix:
-            p = cfg.voices_dir / f"{voice_ref_path}.wav"
-        if not p.is_file():
-            p = Path(voice_ref_path)
-
-        # Look for companion .txt or .json for ref_text
-        txt_path = p.with_suffix(".txt")
-        json_path = p.with_suffix(".json")
-        if txt_path.exists():
-            ref_text = txt_path.read_text().strip()
-        elif json_path.exists():
-            try:
-                ref_text = json.loads(json_path.read_text()).get("transcript", "")
-            except (json.JSONDecodeError, OSError):
-                ref_text = ""
-        else:
-            ref_text = ""
-        return str(p), ref_text
-
-    return None, None
-
-
-def _build_synthesis_req(body: TTSRequest, cfg) -> SynthesisRequest:
-    """Map SepBox TTSRequest to OmniVoice SynthesisRequest."""
-    audio_path, ref_text = _resolve_voice_path(
-        body.voice_ref_path, body.voice_ref_audio, cfg
-    )
-
-    if audio_path:
-        mode = "clone"
-    elif body.instruct:
-        mode = "design"
-    else:
-        mode = "design"
-
-    normalized_text = body.text
-
-    return SynthesisRequest(
-        text=normalized_text,
-        mode=mode,
-        instruct=body.instruct,
-        ref_audio_path=audio_path,
-        ref_text=ref_text,
-        speed=body.speed,
-        duration=body.duration,
-        num_step=body.num_step,
-        language=body.language if body.language != "en" else None,
-        guidance_scale=body.guidance_scale,
-        denoise=body.denoise,
-        t_shift=body.t_shift,
-        position_temperature=body.position_temperature,
-        class_temperature=body.class_temperature,
-        layer_penalty_factor=body.layer_penalty_factor,
-        preprocess_prompt=body.preprocess_prompt,
-        postprocess_output=body.postprocess_output,
-        audio_chunk_duration=body.audio_chunk_duration,
-        audio_chunk_threshold=body.audio_chunk_threshold,
-    )
-
-
-def _tensor_to_base64_float32(tensor) -> str:
-    """Convert tensor to base64-encoded raw float32 PCM bytes."""
-    import numpy as np
-
-    if isinstance(tensor, np.ndarray):
-        flat = tensor.squeeze()
-    else:
-        flat = tensor.squeeze(0).cpu().float().numpy()
-    return base64.b64encode(flat.astype(np.float32).tobytes()).decode("ascii")
-
-
 # ── POST /generate ────────────────────────────────────────────────────────────
 
 
@@ -354,18 +258,34 @@ async def generate(
             detail="Text exceeds 10,000 characters",
         )
 
-    syn_req = _build_synthesis_req(body, cfg)
+    syn_req = build_synthesis_request(
+        text=body.text,
+        cfg=cfg,
+        voice_ref=body.voice_ref_path,
+        voice_ref_audio=body.voice_ref_audio,
+        instruct=body.instruct,
+        speed=body.speed,
+        duration=body.duration,
+        num_step=body.num_step,
+        language=body.language if body.language != "en" else None,
+        guidance_scale=body.guidance_scale,
+        denoise=body.denoise,
+        t_shift=body.t_shift,
+        position_temperature=body.position_temperature,
+        class_temperature=body.class_temperature,
+        layer_penalty_factor=body.layer_penalty_factor,
+        preprocess_prompt=body.preprocess_prompt,
+        postprocess_output=body.postprocess_output,
+        audio_chunk_duration=body.audio_chunk_duration,
+        audio_chunk_threshold=body.audio_chunk_threshold,
+        _trace_id=get_current_trace_id(),
+    )
 
-    # Pass trace context for nested inference span
-    syn_req._trace_id = get_current_trace_id()
-
-    if syn_req.ref_audio_path:
-        p = Path(syn_req.ref_audio_path)
-        if not p.exists():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Voice path not found: {body.voice_ref_path}",
-            )
+    if body.voice_ref_path and not syn_req.ref_audio_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Voice path not found: {body.voice_ref_path}",
+        )
 
     try:
         timeout_s = cfg.request_timeout_s
@@ -500,7 +420,27 @@ async def _stream_sse(
         yield f"data: {event}\n\n"
         return
 
-    base_req = _build_synthesis_req(body, cfg)
+    base_req = build_synthesis_request(
+        text=body.text,
+        cfg=cfg,
+        voice_ref=body.voice_ref_path,
+        voice_ref_audio=body.voice_ref_audio,
+        instruct=body.instruct,
+        speed=body.speed,
+        duration=body.duration,
+        num_step=body.num_step,
+        language=body.language if body.language != "en" else None,
+        guidance_scale=body.guidance_scale,
+        denoise=body.denoise,
+        t_shift=body.t_shift,
+        position_temperature=body.position_temperature,
+        class_temperature=body.class_temperature,
+        layer_penalty_factor=body.layer_penalty_factor,
+        preprocess_prompt=body.preprocess_prompt,
+        postprocess_output=body.postprocess_output,
+        audio_chunk_duration=body.audio_chunk_duration,
+        audio_chunk_threshold=body.audio_chunk_threshold,
+    )
     chunk_index = 0
     for sentence in sentences:
         syn_req = SynthesisRequest(
@@ -546,7 +486,7 @@ async def _stream_sse(
             return
 
         for tensor in result.tensors:
-            audio_b64 = _tensor_to_base64_float32(tensor)
+            audio_b64 = tensor_to_base64_float32(tensor)
             event = json.dumps({
                 "chunk_index": chunk_index,
                 "audio": audio_b64,

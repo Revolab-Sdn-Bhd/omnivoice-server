@@ -6,7 +6,6 @@ POST /v1/audio/speech — OpenAI-compatible TTS (with optional SSE streaming)
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import time
@@ -27,6 +26,19 @@ from ..observability.tracer import (
 from ..services.inference import InferenceService, QueueFullError, SynthesisRequest
 from ..services.metrics import MetricsService
 from ..utils.audio import encode_tensors, tensors_to_wav_bytes
+from ._shared import (  # noqa: I001
+    build_synthesis_request,
+    tensor_to_base64_float32,
+)
+from ._shared import (
+    get_cfg as _get_cfg,
+)
+from ._shared import (
+    get_inference_svc as _get_inference,
+)
+from ._shared import (
+    get_metrics_svc as _get_metrics,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -51,63 +63,6 @@ class OpenAISpeechRequest(BaseModel):
     max_tokens: int = Field(default=1000, ge=1)
     chunk_size: int = Field(default=0, ge=0)
     language: str = Field(default="en", pattern=r"^(en|ms|mixed)$")
-
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-
-def _get_inference(request: Request) -> InferenceService:
-    return request.app.state.inference_svc
-
-
-def _get_metrics(request: Request) -> MetricsService:
-    return request.app.state.metrics_svc
-
-
-def _get_cfg(request: Request):
-    return request.app.state.cfg
-
-
-def _resolve_voice(voice_id: str, cfg) -> tuple[str | None, str | None]:
-    """Resolve voice ID to (wav_path, ref_text)."""
-    wav_path = cfg.voices_dir / f"{voice_id}.wav"
-    if not wav_path.is_file():
-        return None, None
-    ref_text = ""
-    json_path = wav_path.with_suffix(".json")
-    if json_path.exists():
-        try:
-            ref_text = json.loads(json_path.read_text()).get("transcript", "")
-        except (json.JSONDecodeError, OSError):
-            pass
-    return str(wav_path), ref_text
-
-
-def _build_synthesis_req(body: OpenAISpeechRequest, cfg) -> SynthesisRequest:
-    """Map OpenAI speech request to OmniVoice SynthesisRequest."""
-    audio_path, ref_text = _resolve_voice(body.voice, cfg)
-
-    if audio_path:
-        mode = "clone"
-    else:
-        mode = "design"
-
-    return SynthesisRequest(
-        text=body.input,
-        mode=mode,
-        ref_audio_path=audio_path,
-        ref_text=ref_text,
-        speed=body.speed,
-        class_temperature=body.temperature if body.temperature != 0.3 else None,
-    )
-
-
-def _tensor_to_base64_float32(tensor) -> str:
-    """Convert tensor to base64-encoded raw float32 PCM bytes."""
-    import numpy as np
-
-    flat = tensor.squeeze(0).cpu().float().numpy()
-    return base64.b64encode(flat.astype(np.float32).tobytes()).decode("ascii")
 
 
 # ── GET /v1/audio/voices ─────────────────────────────────────────────────────
@@ -160,14 +115,6 @@ async def create_speech(
             detail="Input exceeds 10,000 characters",
         )
 
-    # Validate voice exists
-    audio_path, _ = _resolve_voice(body.voice, cfg)
-    if not audio_path:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Voice '{body.voice}' not found",
-        )
-
     logger.info(
         "[speech] client=%s voice=%s stream=%s text=%r",
         client, body.voice, stream, body.input,
@@ -185,10 +132,20 @@ async def create_speech(
             },
         )
 
-    syn_req = _build_synthesis_req(body, cfg)
+    syn_req = build_synthesis_request(
+        text=body.input,
+        cfg=cfg,
+        voice_ref=body.voice,
+        speed=body.speed,
+        class_temperature=body.temperature if body.temperature != 0.3 else None,
+        _trace_id=get_current_trace_id(),
+    )
 
-    # Pass trace context for nested inference span
-    syn_req._trace_id = get_current_trace_id()
+    if not syn_req.ref_audio_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Voice '{body.voice}' not found",
+        )
 
     try:
         timeout_s = cfg.request_timeout_s
@@ -293,7 +250,13 @@ async def _stream_sse(
         yield f"data: {event}\n\n"
         return
 
-    base_req = _build_synthesis_req(body, cfg)
+    base_req = build_synthesis_request(
+        text=body.input,
+        cfg=cfg,
+        voice_ref=body.voice,
+        speed=body.speed,
+        class_temperature=body.temperature if body.temperature != 0.3 else None,
+    )
     chunk_index = 0
     ttfc_logged = False
 
@@ -338,7 +301,7 @@ async def _stream_sse(
                     client, body.voice, time.monotonic() - t0,
                 )
                 ttfc_logged = True
-            audio_b64 = _tensor_to_base64_float32(tensor)
+            audio_b64 = tensor_to_base64_float32(tensor)
             event = json.dumps({
                 "chunk_index": chunk_index,
                 "audio": audio_b64,

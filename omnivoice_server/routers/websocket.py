@@ -24,6 +24,7 @@ from ..observability.tracer import (
 )
 from ..services.inference import SynthesisRequest
 from ..utils.text import split_sentences
+from ._shared import build_synthesis_request
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -74,18 +75,6 @@ async def _send_buffered_chunks(
             return chunk_idx
         chunk_idx += 1
     return chunk_idx
-
-
-def _resolve_voice_path(voice_id: str, cfg) -> tuple[str | None, str | None]:
-    """Resolve voice_id to (wav_path, ref_text)."""
-    if not voice_id:
-        voice_id = "anwar"
-    wav_path = cfg.voices_dir / f"{voice_id}.wav"
-    if not wav_path.is_file():
-        return None, None
-    txt_path = wav_path.with_suffix(".txt")
-    ref_text = txt_path.read_text().strip() if txt_path.exists() else ""
-    return str(wav_path), ref_text
 
 
 @router.websocket("/tts/websocket")
@@ -259,8 +248,28 @@ async def _process_transcript(
     cfg = ws.app.state.cfg
     inference_svc = ws.app.state.inference_svc
 
-    audio_path, ref_text = _resolve_voice_path(voice_id, cfg)
-    if not audio_path:
+    base_req = build_synthesis_request(
+        text=transcript,
+        cfg=cfg,
+        voice_ref=voice_id or "anwar",
+        instruct=instruct,
+        speed=speed,
+        duration=duration,
+        num_step=num_step,
+        language=language if language != "en" else None,
+        guidance_scale=guidance_scale,
+        denoise=denoise,
+        t_shift=t_shift,
+        position_temperature=position_temperature,
+        class_temperature=class_temperature,
+        layer_penalty_factor=layer_penalty_factor,
+        preprocess_prompt=preprocess_prompt,
+        postprocess_output=postprocess_output,
+        audio_chunk_duration=audio_chunk_duration,
+        audio_chunk_threshold=audio_chunk_threshold,
+    )
+
+    if not base_req.ref_audio_path:
         await _send_error(ws, f"Voice '{voice_id}' not found", ctx_id)
         return
 
@@ -277,24 +286,24 @@ async def _process_transcript(
 
         syn_req = SynthesisRequest(
             text=sentence,
-            mode=mode,
-            instruct=instruct,
-            ref_audio_path=audio_path,
-            ref_text=ref_text,
-            speed=speed,
-            language=language if language != "en" else None,
-            num_step=num_step,
-            guidance_scale=guidance_scale,
-            denoise=denoise,
-            t_shift=t_shift,
-            duration=duration,
-            position_temperature=position_temperature,
-            class_temperature=class_temperature,
-            layer_penalty_factor=layer_penalty_factor,
-            preprocess_prompt=preprocess_prompt,
-            postprocess_output=postprocess_output,
-            audio_chunk_duration=audio_chunk_duration,
-            audio_chunk_threshold=audio_chunk_threshold,
+            mode=base_req.mode,
+            instruct=base_req.instruct,
+            ref_audio_path=base_req.ref_audio_path,
+            ref_text=base_req.ref_text,
+            speed=base_req.speed,
+            language=base_req.language,
+            num_step=base_req.num_step,
+            guidance_scale=base_req.guidance_scale,
+            denoise=base_req.denoise,
+            t_shift=base_req.t_shift,
+            duration=base_req.duration,
+            position_temperature=base_req.position_temperature,
+            class_temperature=base_req.class_temperature,
+            layer_penalty_factor=base_req.layer_penalty_factor,
+            preprocess_prompt=base_req.preprocess_prompt,
+            postprocess_output=base_req.postprocess_output,
+            audio_chunk_duration=base_req.audio_chunk_duration,
+            audio_chunk_threshold=base_req.audio_chunk_threshold,
             _trace_id=span.trace_id if span else None,
         )
 
