@@ -60,3 +60,4 @@ tmp/omnivoice_server/static/speakers/*.wav
 omnivoice_server/static/speakers/*.txt
 omnivoice_server/static/speakers/*.json
 omnivoice_server/static/anwar.wav
+regression_results/

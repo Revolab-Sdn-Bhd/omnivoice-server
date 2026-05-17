@@ -20,82 +20,225 @@ function loadScript(primary, fallback) {
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e5e5e5;min-height:100vh}
 
-/* Layout */
+/* Layout - 3 columns */
 .layout{display:flex;height:100vh;overflow:hidden}
-.sidebar{width:224px;min-width:224px;background:#111;border-right:1px solid #1e1e1e;display:flex;flex-direction:column}
-.main{flex:1;display:flex;flex-direction:column;overflow-y:auto;padding:24px 32px}
+.left-sidebar{width:260px;min-width:260px;background:#111;border-right:1px solid #1e1e1e;display:flex;flex-direction:column}
+.center-main{flex:1;display:flex;flex-direction:column;overflow-y:auto;padding:24px 32px;min-width:0}
+.right-sidebar{width:280px;min-width:280px;background:#111;border-left:1px solid #1e1e1e;display:flex;flex-direction:column;overflow-y:auto}
 
-/* Sidebar */
-.sidebar-header{padding:20px;border-bottom:1px solid #1e1e1e}
-.sidebar-header h2{font-size:13px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:1px}
-.sidebar-body{flex:1;overflow-y:auto;padding:12px}
+/* Left Sidebar */
+.sidebar-header{padding:16px 16px 12px;border-bottom:1px solid #1e1e1e}
+.sidebar-header h2{font-size:13px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;justify-content:space-between}
+.sidebar-header h2 .actions{display:flex;gap:6px;align-items:center}
+.sidebar-header h2 .actions button{background:none;border:1px solid #333;color:#888;border-radius:6px;padding:3px 7px;cursor:pointer;font-size:12px;transition:all .15s}
+.sidebar-header h2 .actions button:hover{border-color:#555;color:#bbb}
+.search-box{padding:12px 16px}
+.search-input{width:100%;background:#141414;border:1px solid #222;border-radius:8px;color:#e5e5e5;padding:8px 12px;font-size:12px;font-family:inherit;transition:border-color .15s}
+.search-input:focus{outline:none;border-color:#3b82f6}
+.search-input::placeholder{color:#555}
+.speakers-scroll{flex:1;overflow-y:auto;padding:4px 12px 12px}
 
-.speaker-card{background:#181818;border:1px solid #252525;border-radius:10px;padding:14px 16px;margin-bottom:8px;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:space-between}
+/* Speaker cards with tags */
+.speaker-card{background:#181818;border:1px solid #252525;border-radius:10px;padding:12px 14px;margin-bottom:6px;cursor:pointer;transition:all .15s}
 .speaker-card:hover{border-color:#3b82f6;background:#1a1a2a}
 .speaker-card.selected{border-color:#3b82f6;background:#1a2040}
-.speaker-card .name{font-size:14px;font-weight:500;color:#ddd}
-.speaker-card .play-btn{width:32px;height:32px;border-radius:50%;background:#252525;border:1px solid #333;color:#aaa;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;font-size:12px;flex-shrink:0}
+.speaker-card .card-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.speaker-card .name{font-size:13px;font-weight:500;color:#ddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.speaker-card .play-btn{width:28px;height:28px;border-radius:50%;background:#252525;border:1px solid #333;color:#aaa;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;font-size:10px;flex-shrink:0}
 .speaker-card .play-btn:hover{background:#3b82f6;border-color:#3b82f6;color:#fff}
+.speaker-card .tags{display:flex;flex-wrap:wrap;gap:4px}
+.speaker-card .tag{background:#1e1e2e;border:1px solid #2a2a3a;border-radius:12px;padding:2px 8px;font-size:10px;color:#888;white-space:nowrap}
+.speaker-card .usage-count{font-size:10px;color:#555;margin-top:4px}
+
+/* Design voice card */
+.design-card{background:linear-gradient(135deg,#1a1a2a,#181830);border:1px dashed #3b82f6;border-radius:10px;padding:12px 14px;margin-bottom:6px;cursor:pointer;transition:all .15s}
+.design-card:hover{background:linear-gradient(135deg,#1a2040,#1a1a3a);border-color:#5588ff}
+.design-card.selected{border-style:solid;background:linear-gradient(135deg,#1a2040,#1a1a40)}
+.design-card .name{font-size:13px;font-weight:500;color:#3b82f6;font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.design-card .sub{font-size:11px;color:#5588ff;margin-top:4px}
+
+/* Group headers */
 .spk-group-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;margin-top:8px;cursor:pointer;user-select:none;border-radius:6px;background:#1a1a1a;border:1px solid #222}
 .spk-group-header:first-child{margin-top:0}
 .spk-group-header:hover{background:#1e1e2e}
-.spk-group-header .label{font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.5px}
-.spk-group-header .count{font-size:11px;color:#555}
-.spk-group-header .arrow{color:#555;font-size:10px;transition:transform .15s}
+.spk-group-header .label{font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.5px}
+.spk-group-header .count{font-size:10px;color:#555}
+.spk-group-header .arrow{color:#555;font-size:9px;transition:transform .15s}
 .spk-group-header.collapsed .arrow{transform:rotate(-90deg)}
 .spk-group-body{overflow:hidden;transition:max-height .2s}
 .spk-group-body.collapsed{max-height:0 !important}
 
-.sidebar-footer{padding:16px;border-top:1px solid #1e1e1e}
-.upload-btn{width:100%;background:#181818;border:1px dashed #333;border-radius:10px;color:#888;padding:12px;font-size:13px;cursor:pointer;transition:all .15s;text-align:center}
-.upload-btn:hover{border-color:#3b82f6;color:#bbb}
+/* Sidebar footer */
+.sidebar-footer{padding:12px 16px;border-top:1px solid #1e1e1e}
+.clone-btn{width:100%;background:#1a1a2a;border:1px dashed #3b82f6;border-radius:10px;color:#3b82f6;padding:10px;font-size:13px;cursor:pointer;transition:all .15s;text-align:center;font-weight:500}
+.clone-btn:hover{background:#1a2040;border-color:#5588ff;color:#5588ff}
 
-/* Main content */
-.main h1{font-size:22px;font-weight:600;margin-bottom:4px}
-.main .subtitle{color:#666;font-size:13px;margin-bottom:24px}
+/* Ref text display */
+#ref-text-display{padding:8px 12px;font-size:11px;color:#666;border-top:1px solid #1e1e1e;max-height:50px;overflow-y:auto;display:none;margin:0 16px}
 
-/* Prompt presets */
-.section{margin-bottom:20px}
-.section-label{font-size:12px;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
-.preset-list{display:flex;flex-direction:column;gap:12px;max-height:260px;overflow-y:auto;padding-right:4px}
-.preset-group{}
-.preset-cat{font-size:11px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
-.preset-chips{display:flex;flex-wrap:wrap;gap:6px}
-.preset-chip{background:#141414;border:1px solid #222;border-radius:20px;padding:6px 14px;cursor:pointer;transition:all .15s;font-size:12px;color:#999;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+/* Center Main Content */
+.project-header{margin-bottom:20px}
+.project-name-row{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.project-name{font-size:20px;font-weight:600;color:#e5e5e5;background:none;border:1px solid transparent;border-radius:6px;padding:2px 6px;font-family:inherit;transition:border-color .15s}
+.project-name:hover{border-color:#333}
+.project-name:focus{outline:none;border-color:#3b82f6}
+.project-meta{font-size:11px;color:#555;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.project-meta select{font-size:10px;color:#555;border:1px solid #333;border-radius:3px;padding:1px 4px;background:#141414;cursor:pointer}
+.project-meta #revision-status{color:#888}
+
+/* Preset category tabs */
+.preset-tabs{display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap}
+.preset-tab{background:#141414;border:1px solid #222;border-radius:20px;padding:6px 14px;cursor:pointer;transition:all .15s;font-size:12px;color:#999;white-space:nowrap}
+.preset-tab:hover{border-color:#3b82f6;color:#ddd}
+.preset-tab.active{border-color:#3b82f6;background:#1a2040;color:#fff}
+.preset-tab .surprise{color:#3b82f6;margin-left:4px;font-size:11px}
+
+/* Preset chips row */
+.preset-chips-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
+.preset-chip{background:#141414;border:1px solid #222;border-radius:20px;padding:6px 14px;cursor:pointer;transition:all .15s;font-size:12px;color:#999;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis}
 .preset-chip:hover{border-color:#3b82f6;color:#ddd;background:#1a1a2a}
 .preset-chip.selected{border-color:#3b82f6;background:#1a2040;color:#fff}
 
-/* Text input */
-.text-input{width:100%;background:#141414;border:1px solid #222;border-radius:10px;color:#e5e5e5;padding:14px 16px;font-size:14px;font-family:inherit;resize:vertical;min-height:100px;max-height:300px}
+/* Text input section */
+.text-section{margin-bottom:16px}
+.text-section-label{font-size:11px;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between}
+.char-count{font-size:11px;color:#555;font-weight:400;text-transform:none;letter-spacing:0}
+.text-input{width:100%;background:#141414;border:1px solid #222;border-radius:10px;color:#e5e5e5;padding:14px 16px;font-size:14px;font-family:inherit;resize:vertical;min-height:120px;max-height:300px;transition:border-color .15s}
 .text-input:focus{outline:none;border-color:#3b82f6}
 .text-input::placeholder{color:#555}
 
-/* Generation params */
-.params-grid{display:flex;gap:16px;flex-wrap:wrap}
-.param-group{flex:1;min-width:140px}
-.param-group label{display:block;font-size:11px;color:#666;margin-bottom:6px;text-transform:uppercase;letter-spacing:.3px}
-.param-group input,.param-group select{width:100%;background:#141414;border:1px solid #222;border-radius:8px;color:#e5e5e5;padding:10px 12px;font-size:13px;font-family:inherit}
-.param-group input:focus,.param-group select:focus{outline:none;border-color:#3b82f6}
-.param-group input[type=range]{-webkit-appearance:none;appearance:none;border:none;padding:0;height:6px;border-radius:3px;background:#252525}
-.param-group input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:#3b82f6;cursor:pointer}
-.param-group select option{background:#141414;color:#e5e5e5}
+/* Inline controls row */
+.inline-controls{display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}
+.inline-control{display:flex;align-items:center;gap:6px}
+.inline-control label{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap}
+.inline-control select,.inline-control input[type=number]{background:#141414;border:1px solid #222;border-radius:8px;color:#e5e5e5;padding:6px 10px;font-size:12px;font-family:inherit}
+.inline-control select:focus,.inline-control input:focus{outline:none;border-color:#3b82f6}
+.inline-control select option{background:#141414;color:#e5e5e5}
 
-/* Generate button */
-.generate-btn{width:100%;background:#3b82f6;border:none;border-radius:10px;color:#fff;padding:14px;font-size:15px;font-weight:600;cursor:pointer;transition:background .15s;margin-top:4px}
+/* Speed slider */
+.speed-slider-wrap{display:flex;align-items:center;gap:8px;min-width:160px}
+.speed-slider{flex:1;-webkit-appearance:none;appearance:none;height:4px;border-radius:2px;background:#252525;border:none;outline:none}
+.speed-slider::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#3b82f6;cursor:pointer;transition:background .15s}
+.speed-slider::-webkit-slider-thumb:hover{background:#2563eb}
+.speed-slider::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#3b82f6;cursor:pointer;border:none}
+.speed-val{font-size:12px;color:#888;min-width:30px;text-align:center}
+
+/* Settings gear */
+.settings-btn{background:none;border:1px solid #333;border-radius:8px;color:#888;padding:6px 10px;cursor:pointer;font-size:14px;transition:all .15s;display:flex;align-items:center;gap:4px}
+.settings-btn:hover{border-color:#3b82f6;color:#bbb}
+.settings-btn .label{font-size:11px;color:#888}
+.settings-btn.open{border-color:#3b82f6;color:#3b82f6}
+
+/* Generate buttons */
+.generate-row{display:flex;gap:10px;margin-top:14px}
+.generate-btn{flex:3;background:#3b82f6;border:none;border-radius:10px;color:#fff;padding:12px;font-size:14px;font-weight:600;cursor:pointer;transition:background .15s}
 .generate-btn:hover{background:#2563eb}
 .generate-btn:disabled{background:#1e1e1e;color:#444;cursor:not-allowed}
-.stream-btn{background:#8b5cf6}
+.stream-btn{flex:1;background:#8b5cf6;border:none;border-radius:10px;color:#fff;padding:12px;font-size:14px;font-weight:600;cursor:pointer;transition:background .15s}
 .stream-btn:hover{background:#7c3aed}
 .stream-btn:disabled{background:#1e1e1e;color:#444;cursor:not-allowed}
 
 /* Error */
-.error{background:#2a1010;border:1px solid #5c1a1a;border-radius:10px;padding:14px;color:#f87171;font-size:13px;margin-top:12px}
+.error{background:#2a1010;border:1px solid #5c1a1a;border-radius:10px;padding:12px;color:#f87171;font-size:13px;margin-top:12px}
 
 /* Spinner */
-.spinner{display:inline-block;width:16px;height:16px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:8px}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-/* Upload modal overlay */
+/* Normalized text */
+.normalized-box{margin-top:8px;padding:8px 10px;background:#1a1a1a;border-radius:8px;font-size:12px;color:#8b8b8b;border:1px solid #2a2a2a}
+.normalized-box .norm-label{font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px}
+.normalized-box .norm-text{color:#999}
+
+/* Stream Debug Panel */
+#stream-debug{margin-top:16px}
+.stream-debug-header{font-size:11px;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+#stream-stats{font-weight:400;color:#5588ff}
+#stream-log{background:#0d0d0d;border:1px solid #1e1e1e;border-radius:8px;padding:10px 12px;font-family:monospace;font-size:11px;max-height:260px;overflow-y:auto;line-height:1.6}
+
+/* Generated Audio section */
+.audio-history-section{margin-top:24px}
+.audio-history-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.audio-history-header h3{font-size:13px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.5px}
+.audio-history-header .header-right{display:flex;align-items:center;gap:10px}
+.audio-history-header .count-badge{background:#1e1e2e;border:1px solid #2a2a3a;border-radius:12px;padding:2px 8px;font-size:11px;color:#888}
+.audio-history-header .sort-select{background:#141414;border:1px solid #222;border-radius:6px;color:#888;padding:4px 8px;font-size:11px;font-family:inherit;cursor:pointer}
+.audio-history-header .sort-select option{background:#141414;color:#e5e5e5}
+
+/* Audio history cards */
+.audio-cards{display:flex;flex-direction:column;gap:8px}
+.audio-card{background:#181818;border:1px solid #252525;border-radius:10px;padding:14px 16px;transition:border-color .15s}
+.audio-card:hover{border-color:#333}
+.audio-card-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.audio-card-title{font-size:13px;color:#e5e5e5;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:8px}
+.audio-card-version{font-size:10px;color:#555;margin-left:4px}
+.audio-card-status{background:#1a2a1a;border:1px solid #1a3a1a;border-radius:12px;padding:2px 8px;font-size:10px;color:#4ade80;white-space:nowrap}
+.audio-card-waveform{height:36px;margin-bottom:8px;border-radius:6px;overflow:hidden;background:#141414}
+.audio-card-bottom{display:flex;align-items:center;justify-content:space-between}
+.audio-card-meta{display:flex;align-items:center;gap:8px;font-size:11px;color:#666}
+.audio-card-meta .duration{color:#888}
+.audio-card-meta .speaker{color:#5588ff}
+.audio-card-meta .time-ago{color:#555}
+.audio-card-actions{display:flex;align-items:center;gap:4px}
+.audio-card-actions button{background:none;border:1px solid transparent;border-radius:6px;color:#888;padding:4px 8px;cursor:pointer;font-size:11px;transition:all .15s}
+.audio-card-actions button:hover{border-color:#333;color:#bbb;background:#1a1a1a}
+
+.load-more-btn{width:100%;background:#141414;border:1px solid #222;border-radius:10px;color:#888;padding:10px;font-size:12px;cursor:pointer;transition:all .15s;margin-top:8px}
+.load-more-btn:hover{border-color:#3b82f6;color:#bbb}
+.audio-tip{font-size:11px;color:#555;margin-top:12px;text-align:center}
+
+/* Advanced params panel */
+.advanced-panel{background:#141414;border:1px solid #222;border-radius:10px;padding:16px;margin-top:10px;display:none}
+.advanced-panel.visible{display:block}
+.advanced-panel .params-grid{display:flex;gap:12px;flex-wrap:wrap}
+.advanced-panel .param-group{flex:1;min-width:130px}
+.advanced-panel .param-group label{display:block;font-size:10px;color:#666;margin-bottom:4px;text-transform:uppercase;letter-spacing:.3px}
+.advanced-panel .param-group input,.advanced-panel .param-group select{width:100%;background:#181818;border:1px solid #222;border-radius:6px;color:#e5e5e5;padding:6px 8px;font-size:12px;font-family:inherit}
+.advanced-panel .param-group input:focus,.advanced-panel .param-group select:focus{outline:none;border-color:#3b82f6}
+.advanced-panel .param-group select option{background:#141414;color:#e5e5e5}
+
+/* Right Sidebar */
+.right-sidebar-section{padding:16px;border-bottom:1px solid #1e1e1e}
+.right-sidebar-section h3{font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
+.right-sidebar-section h3 a{font-size:11px;color:#3b82f6;text-decoration:none;font-weight:400}
+
+/* History items */
+.history-list{display:flex;flex-direction:column;gap:6px}
+.history-item{background:#181818;border:1px solid #252525;border-radius:8px;padding:10px 12px;cursor:pointer;transition:all .15s}
+.history-item:hover{border-color:#3b82f6;background:#1a1a2a}
+.history-item.active{border-color:#3b82f6;background:#1a2040}
+.history-item-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:2px}
+.history-item-version{font-size:11px;color:#888;font-weight:500}
+.history-item-time{font-size:10px;color:#555}
+.history-item-text{font-size:12px;color:#999;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Export settings */
+.export-row{margin-bottom:12px}
+.export-row label{display:block;font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px}
+.export-row select{width:100%;background:#181818;border:1px solid #222;border-radius:8px;color:#e5e5e5;padding:8px 10px;font-size:12px;font-family:inherit}
+.export-row select option{background:#141414;color:#e5e5e5}
+.export-checkbox{display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;font-size:12px;color:#999}
+.export-checkbox input{accent-color:#3b82f6;cursor:pointer}
+.share-link-btn{width:100%;background:#1a1a2a;border:1px solid #2a2a3a;border-radius:10px;color:#888;padding:10px;font-size:12px;cursor:pointer;transition:all .15s;text-align:center}
+.share-link-btn:hover{border-color:#3b82f6;color:#bbb}
+
+/* Command hints */
+.command-hints{padding:12px 16px;display:flex;align-items:center;justify-content:center;gap:16px;font-size:10px;color:#444;border-top:1px solid #1e1e1e;margin-top:auto}
+.command-hints kbd{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:3px;padding:1px 4px;font-size:10px;color:#555}
+
+/* Audio viz (hidden player) */
+#audio-viz{display:none;margin-top:16px}
+#audio-viz .section-label{font-size:11px;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.player-controls{display:flex;align-items:center;gap:12px;margin-top:10px;font-size:12px;color:#888}
+.player-controls #play-btn{width:36px;height:36px;border-radius:50%;background:#3b82f6;border:none;color:#fff;font-size:16px;cursor:pointer;flex-shrink:0}
+.player-controls #play-btn:hover{background:#2563eb}
+.player-controls .player-meta-wrap{display:flex;flex-direction:column}
+.player-controls #audio-meta-note{font-size:10px;color:#555;margin-top:2px}
+.player-controls .player-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.player-controls #download-btn{background:none;border:none;color:#3b82f6;cursor:pointer;font-size:12px;text-decoration:underline;padding:0}
+.player-controls #save-speaker-link{color:#3b82f6;text-decoration:none;cursor:pointer;font-size:12px}
+
+/* Modal overlay */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:none;align-items:center;justify-content:center}
 .modal-overlay.visible{display:flex}
 .modal{background:#181818;border:1px solid #252525;border-radius:14px;padding:24px;width:400px;max-width:90vw}
@@ -111,118 +254,275 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .modal .btn-cancel:hover{background:#333}
 
 /* Responsive */
+@media(max-width:1100px){
+  .right-sidebar{display:none}
+}
 @media(max-width:768px){
   .layout{flex-direction:column}
-  .sidebar{width:100%;min-width:unset;max-height:200px;border-right:none;border-bottom:1px solid #1e1e1e}
-  .sidebar-body{display:flex;overflow-x:auto;gap:8px;padding:8px}
-  .speaker-card{min-width:140px;margin-bottom:0}
+  .left-sidebar{width:100%;min-width:unset;max-height:200px;border-right:none;border-bottom:1px solid #1e1e1e}
+  .speakers-scroll{display:flex;overflow-x:auto;gap:6px;padding:8px}
+  .speaker-card{min-width:160px;margin-bottom:0}
+  .right-sidebar{display:none}
 }
+.toast-notification{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#e0e0e0;padding:12px 24px;border-radius:8px;border:1px solid #333;font-size:14px;z-index:9999;opacity:0;transition:opacity 0.3s ease;pointer-events:none}
+.toast-notification.visible{opacity:1}
 </style>
 </head>
 <body>
 <div class="layout">
-  <!-- Sidebar: Speakers -->
-  <div class="sidebar">
+  <!-- LEFT SIDEBAR - Speakers -->
+  <div class="left-sidebar">
     <div class="sidebar-header">
-      <h2>Speakers <span id="voices-rev" style="color:#444;font-size:10px;font-weight:normal"></span></h2>
-      <button onclick="refreshVoices(this)" title="Refresh speakers from HuggingFace" style="background:none;border:1px solid #333;color:#888;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:14px">&#8635;</button>
+      <h2>Speakers <span id="voices-rev" style="color:#444;font-size:10px;font-weight:normal"></span>
+        <span class="actions">
+          <button onclick="refreshVoices(this)" title="Refresh speakers">&#8635;</button>
+        </span>
+      </h2>
     </div>
-    <div class="sidebar-body" id="speaker-list">
-      <input type="text" id="speaker-search" placeholder="Search speakers..." oninput="renderSpeakers()" style="width:100%;background:#141414;border:1px solid #222;border-radius:8px;color:#e5e5e5;padding:8px 10px;font-size:12px;margin-bottom:8px">
+    <div class="search-box">
+      <input type="text" class="search-input" id="speaker-search" placeholder="Search speakers..." oninput="renderSpeakers()">
+    </div>
+    <div class="speakers-scroll" id="speaker-list">
       <!-- populated by JS -->
     </div>
-    <div id="ref-text-display" style="padding:8px 12px;font-size:12px;color:#888;border-top:1px solid #333;max-height:60px;overflow-y:auto;display:none"></div>
+    <div id="ref-text-display"></div>
     <div class="sidebar-footer">
-      <div class="upload-btn" onclick="showDesignModal()" style="margin-bottom:8px">&#10022; Design Voice</div>
-      <div class="upload-btn" onclick="showUploadModal()">+ Upload Speaker</div>
+      <button class="clone-btn" onclick="showUploadModal()">&#43; Clone New Voice</button>
+      <button class="clone-btn" onclick="showDesignModal()" style="margin-top:6px;background:#1a1a2a;border-style:solid;border-color:#8b5cf6;color:#8b5cf6">&#10022; Design Voice</button>
     </div>
   </div>
 
-  <!-- Main Content -->
-  <div class="main">
-    <h1>RevoVoice</h1>
-    <p class="subtitle">Text-to-speech generation <span id="model-rev" style="color:#444;font-size:11px;margin-left:6px"></span></p>
+  <!-- CENTER - Main Content -->
+  <div class="center-main">
+    <!-- Project header -->
+    <div class="project-header">
+      <div class="project-name-row">
+        <input type="text" class="project-name" id="project-name" value="Untitled Project" onfocus="if(this.value==='Untitled Project')this.select()">
+      </div>
+      <div class="project-meta">
+        <span id="model-rev" style="color:#444;font-size:11px"></span>
+        <select id="revision-select" onchange="switchRevision(this.value)"></select>
+        <span id="revision-status"></span>
+      </div>
+    </div>
 
-    <!-- Prompt Presets -->
-    <div class="section">
-      <div class="section-label">Prompt Preset</div>
-      <div class="preset-list" id="preset-list">
+    <!-- Preset category tabs -->
+    <div class="section" style="margin-bottom:0">
+      <div class="preset-tabs" id="preset-tabs">
+        <!-- populated by JS -->
+      </div>
+      <div class="preset-chips-row" id="preset-chips-row">
         <!-- populated by JS -->
       </div>
     </div>
 
     <!-- Text Input -->
-    <div class="section">
-      <div class="section-label">Text to Synthesize</div>
-      <textarea class="text-input" id="text-input" placeholder="Enter text or select a preset above..." oninput="debounceEstimate()" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter')generate()"></textarea>
-    </div>
+    <div class="text-section">
+      <div class="text-section-label">
+        <span>TEXT TO SPEECH</span>
+        <span class="char-count"><span id="char-count">0</span>/5000</span>
+      </div>
+      <textarea class="text-input" id="text-input" placeholder="Enter text or select a preset above..." oninput="onTextInput()" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter')generate()"></textarea>
 
-    <!-- Generation Params -->
-    <div class="section">
-      <div class="section-label">Generation Params</div>
-      <div class="params-grid">
-        <div class="param-group">
-          <label>Temperature</label>
-          <input type="number" id="param-temp" value="0.3" min="0" max="2" step="0.1">
-        </div>
-        <div class="param-group">
-          <label>Target LUFS</label>
-          <input type="number" id="param-lufs" value="-23" min="-60" max="0" step="1">
-        </div>
-        <div class="param-group">
-          <label>Speed Mode</label>
-          <select id="param-speed-mode">
-            <option value="turbo">Turbo (4 steps)</option>
-            <option value="fast" selected>Fast (10 steps)</option>
-            <option value="normal">Normal (16 steps)</option>
-            <option value="quality">Quality (32 steps)</option>
+      <!-- Inline controls -->
+      <div class="inline-controls">
+        <div class="inline-control">
+          <label>Speaker</label>
+          <select id="inline-speaker" onchange="onInlineSpeakerChange(this.value)" style="max-width:140px">
+            <option value="">Select...</option>
           </select>
         </div>
-        <div class="param-group">
-          <label>Duration Override</label>
-          <div style="display:flex;align-items:center;gap:8px">
-            <input type="range" id="param-duration" min="0.5" max="20" step="0.1" value="0" style="flex:1;display:none">
-            <span id="param-duration-label" style="font-size:12px;color:#666;min-width:60px">Auto</span>
+        <div class="inline-control">
+          <label>Speed</label>
+          <div class="speed-slider-wrap">
+            <input type="range" class="speed-slider" id="param-speed-slider" min="0.5" max="3.0" step="0.1" value="1.0" oninput="onSpeedSliderChange(this.value)">
+            <span class="speed-val" id="speed-val">1.0x</span>
           </div>
-          <div id="duration-estimate" style="font-size:11px;color:#555;margin-top:4px"></div>
+        </div>
+        <div class="inline-control">
+          <label>Speed Mode</label>
+          <select id="param-speed-mode">
+            <option value="turbo">Turbo</option>
+            <option value="fast" selected>Fast</option>
+            <option value="normal">Normal</option>
+            <option value="quality">Quality</option>
+          </select>
+        </div>
+        <button class="settings-btn" id="settings-toggle" onclick="toggleAdvanced()">
+          <span style="font-size:14px">&#9881;</span>
+          <span class="label">Settings</span>
+        </button>
+      </div>
+
+      <!-- Advanced params (collapsible) -->
+      <div class="advanced-panel" id="advanced-params">
+        <div class="params-grid">
+          <div class="param-group">
+            <label>Duration Override</label>
+            <div style="display:flex;align-items:center;gap:6px">
+              <input type="range" id="param-duration" min="0.5" max="20" step="0.1" value="0" style="flex:1;display:none">
+              <span id="param-duration-label" style="font-size:11px;color:#666;min-width:40px">Auto</span>
+            </div>
+            <div id="duration-estimate" style="font-size:10px;color:#555;margin-top:3px"></div>
+          </div>
+          <div class="param-group">
+            <label>Target LUFS</label>
+            <input type="number" id="param-lufs" value="-23" min="-60" max="0" step="1">
+          </div>
+          <div class="param-group">
+            <label>Class Temperature</label>
+            <input type="number" id="param-class-temp" value="0.3" min="0" max="2" step="0.1">
+          </div>
+          <div class="param-group">
+            <label>Guidance Scale</label>
+            <input type="number" id="param-guidance-scale" placeholder="Default" min="0" max="10" step="0.5">
+          </div>
+          <div class="param-group">
+            <label>T-Shift</label>
+            <input type="number" id="param-t-shift" placeholder="Default" min="0" max="1" step="0.1">
+          </div>
+          <div class="param-group">
+            <label>Position Temperature</label>
+            <input type="number" id="param-pos-temp" placeholder="Default" min="0" max="2" step="0.1">
+          </div>
+          <div class="param-group">
+            <label>Layer Penalty Factor</label>
+            <input type="number" id="param-layer-penalty" placeholder="Default" min="0" max="10" step="0.1">
+          </div>
+          <div class="param-group">
+            <label>Denoise</label>
+            <select id="param-denoise">
+              <option value="">Default</option>
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+          <div class="param-group">
+            <label>Preprocess Prompt</label>
+            <select id="param-preprocess">
+              <option value="">Default</option>
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+          <div class="param-group">
+            <label>Postprocess Output</label>
+            <select id="param-postprocess">
+              <option value="">Default</option>
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+          <div class="param-group">
+            <label>Audio Chunk Duration</label>
+            <input type="number" id="param-chunk-dur" placeholder="Default" min="0.1" max="30" step="0.5">
+          </div>
+          <div class="param-group">
+            <label>Audio Chunk Threshold</label>
+            <input type="number" id="param-chunk-thresh" placeholder="Default" min="0" max="1" step="0.01">
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Generate -->
-    <div style="display:flex;gap:10px">
-      <button class="generate-btn" id="generate-btn" onclick="generate()" style="flex:3">Generate</button>
-      <button class="generate-btn stream-btn" id="stream-btn" onclick="streamGenerate()" style="flex:1">Stream</button>
+    <!-- Generate buttons -->
+    <div class="generate-row">
+      <button class="generate-btn" id="generate-btn" onclick="generate()">Generate</button>
+      <button class="stream-btn" id="stream-btn" onclick="streamGenerate()">Stream</button>
     </div>
     <div id="error-box"></div>
-    <div id="normalized-text" style="display:none;margin-top:8px;padding:8px 10px;background:#1a1a1a;border-radius:8px;font-size:13px;color:#8b8b8b;border:1px solid #2a2a2a">
-      <span style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:0.5px">Normalized</span>
-      <div id="normalized-text-content" style="margin-top:4px"></div>
+    <div id="normalized-text" class="normalized-box" style="display:none">
+      <div class="norm-label">Normalized</div>
+      <div class="norm-text" id="normalized-text-content"></div>
     </div>
 
     <!-- Stream Debug Panel -->
     <div id="stream-debug" style="display:none;margin-top:16px">
-      <div class="section-label" style="display:flex;align-items:center;justify-content:space-between">
+      <div class="stream-debug-header">
         <span>Stream Debug</span>
-        <span id="stream-stats" style="font-weight:400;color:#5588ff"></span>
+        <span id="stream-stats"></span>
       </div>
-      <div id="stream-log" style="background:#0d0d0d;border:1px solid #1e1e1e;border-radius:8px;padding:10px 12px;font-family:monospace;font-size:11px;max-height:260px;overflow-y:auto;line-height:1.6"></div>
+      <div id="stream-log"></div>
     </div>
 
-    <!-- Audio Visualization -->
-    <div id="audio-viz" style="display:none;margin-top:16px">
-      <div class="section-label">Audio Visualization</div>
+    <!-- Audio Visualization (main player) -->
+    <div id="audio-viz">
+      <div class="section-label">Now Playing</div>
       <div id="waveform"></div>
       <div id="spectrogram"></div>
-      <div style="display:flex;align-items:center;gap:12px;margin-top:10px;font-size:12px;color:#888">
-        <button id="play-btn" onclick="togglePlay()" style="width:36px;height:36px;border-radius:50%;background:#3b82f6;border:none;color:#fff;font-size:16px;cursor:pointer;flex-shrink:0">&#9654;</button>
-        <span id="audio-meta"></span>
-        <div id="audio-meta-note" style="display:none;font-size:11px;color:#555;margin-top:2px"></div>
-        <span style="margin-left:auto">
-          <button id="download-btn" onclick="downloadAudio()" disabled style="background:none;border:none;color:#3b82f6;cursor:pointer;font-size:inherit;text-decoration:underline;padding:0">Download</button>
-          <a id="save-speaker-link" style="display:none;cursor:pointer;color:#3b82f6;text-decoration:none;margin-left:10px" onclick="saveAsSpeaker()">Save as Speaker</a>
-        </span>
+      <div class="player-controls">
+        <button id="play-btn" onclick="togglePlay()">&#9654;</button>
+        <div class="player-meta-wrap">
+          <span id="audio-meta"></span>
+          <span id="audio-meta-note"></span>
+        </div>
+        <div class="player-right">
+          <button id="download-btn" onclick="downloadAudio()" disabled>Download</button>
+          <a id="save-speaker-link" style="display:none" onclick="saveAsSpeaker()">Save as Speaker</a>
+        </div>
       </div>
+    </div>
+
+    <!-- Generated Audio History -->
+    <div class="audio-history-section" id="audio-history-section" style="display:none">
+      <div class="audio-history-header">
+        <h3>Generated Audio</h3>
+        <div class="header-right">
+          <span class="count-badge" id="audio-count">0</span>
+          <select class="sort-select" id="audio-sort" onchange="renderAudioHistory()">
+            <option value="newest">Sort: Newest</option>
+            <option value="oldest">Sort: Oldest</option>
+          </select>
+        </div>
+      </div>
+      <div class="audio-cards" id="audio-cards">
+        <!-- populated by JS -->
+      </div>
+      <div id="load-more-wrap" style="display:none">
+        <button class="load-more-btn" onclick="loadMoreAudio()">Load more</button>
+      </div>
+      <div class="audio-tip">Tip: Try different emotions and speeds to get the best result.</div>
+    </div>
+  </div>
+
+  <!-- RIGHT SIDEBAR - Export & History -->
+  <div class="right-sidebar">
+    <!-- History -->
+    <div class="right-sidebar-section" style="flex:1;overflow-y:auto">
+      <h3>History <a href="javascript:void(0)" onclick="clearHistory()">Clear</a></h3>
+      <div class="history-list" id="history-list">
+        <div style="font-size:11px;color:#555;text-align:center;padding:20px 0">No history yet</div>
+      </div>
+    </div>
+
+    <!-- Export Settings -->
+    <div class="right-sidebar-section">
+      <h3>Export Settings</h3>
+      <div class="export-row">
+        <label>Format</label>
+        <select id="export-format">
+          <option value="wav">WAV (Lossless)</option>
+          <option value="mp3">MP3</option>
+          <option value="opus">Opus</option>
+        </select>
+      </div>
+      <div class="export-row" id="quality-row" style="display:none">
+        <label>Quality</label>
+        <select id="export-quality">
+          <option value="high">High (320 kbps)</option>
+          <option value="medium">Medium (192 kbps)</option>
+          <option value="low">Low (128 kbps)</option>
+        </select>
+      </div>
+      <label class="export-checkbox"><input type="checkbox" id="export-normalize" checked> Normalize Audio</label>
+      <label class="export-checkbox"><input type="checkbox" id="export-remove-silence"> Remove Silence</label>
+      <button class="share-link-btn" onclick="shareLink()">&#128279; Share Link</button>
+    </div>
+
+    <!-- Command hints -->
+    <div class="command-hints">
+      <span><kbd>&#8984;K</kbd> Command Menu</span>
+      <span><kbd>&#8679;&#8984;S</kbd> Save Project</span>
     </div>
   </div>
 </div>
@@ -284,7 +584,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <!-- Upload Modal -->
 <div class="modal-overlay" id="upload-modal">
   <div class="modal">
-    <h3>Upload Speaker</h3>
+    <h3>Clone New Voice</h3>
     <label>Voice Name</label>
     <input type="text" id="upload-name" placeholder="e.g. my_voice">
     <label>Transcript</label>
@@ -310,6 +610,18 @@ let lastWasDesign = false;
 let wavesurfer = null;
 let _blobUrl = null;
 
+// Audio history
+let audioHistory = [];
+let audioHistoryVersion = 0;
+let audioHistoryVisible = 5; // how many cards to show
+const AUDIO_HISTORY_PER_PAGE = 5;
+
+// Speaker usage stats
+var speakerStats = {};
+
+// Language code mapping
+const LANG_MAP = { ms: 'Malay', en: 'English', zh: 'Chinese', ja: 'Japanese', ko: 'Korean', ta: 'Tamil', ar: 'Arabic' };
+
 function _revokeBlobUrl() {
   if (_blobUrl) { URL.revokeObjectURL(_blobUrl); _blobUrl = null; }
 }
@@ -317,12 +629,26 @@ function _revokeBlobUrl() {
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   await Promise.all([loadSpeakers(), loadQuotes(), loadModelInfo()]);
+  await Promise.all([loadHistory(), loadSpeakerStats()]);
+}
+
+async function loadSpeakerStats() {
+  try {
+    const res = await fetch('/api/stats/speakers');
+    const data = await res.json();
+    speakerStats = data.stats || {};
+    renderSpeakers();
+  } catch (e) {
+    console.error('Failed to load speaker stats:', e);
+  }
 }
 
 async function loadModelInfo() {
   try {
-    const res = await fetch('/health');
-    const data = await res.json();
+    const [healthRes, revRes] = await Promise.all([fetch('/health'), fetch('/api/model/revisions')]);
+    const data = await healthRes.json();
+    const revData = await revRes.json();
+
     const el = document.getElementById('model-rev');
     if (data.model_revision) {
       el.textContent = `${data.model_id} @ ${data.model_revision}`;
@@ -331,7 +657,73 @@ async function loadModelInfo() {
     if (data.voices_revision) {
       vel.textContent = `@ ${data.voices_revision}`;
     }
+
+    // Populate revision dropdown
+    const sel = document.getElementById('revision-select');
+    sel.innerHTML = '';
+    const current = revData.current_revision || data.model_revision;
+    for (const rev of revData.revisions || []) {
+      const opt = document.createElement('option');
+      opt.value = rev.commit_hash;
+      const label = rev.title || rev.short_hash;
+      opt.textContent = `${rev.short_hash} ${label && label !== rev.short_hash ? label.substring(0, 40) : ''}`;
+      if (current && rev.short_hash === current) opt.selected = true;
+      sel.appendChild(opt);
+    }
   } catch(e) {}
+}
+
+async function switchRevision(hash) {
+  if (!hash) return;
+  const status = document.getElementById('revision-status');
+  const sel = document.getElementById('revision-select');
+  sel.disabled = true;
+  status.textContent = 'Switching... (may take 1-2 min)';
+  try {
+    const res = await fetch('/api/model/switch-revision', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({revision: hash}),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      if (data.status === 'already_active') {
+        status.textContent = 'Already active';
+      } else {
+        status.textContent = 'Reloading model...';
+        for (let i = 0; i < 60; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            const h = await fetch('/health');
+            const hd = await h.json();
+            if (hd.status === 'ok') {
+              status.textContent = 'Switched to ' + hd.model_revision;
+              await loadModelInfo();
+              break;
+            }
+          } catch(e) { /* server restarting, retry */ }
+        }
+      }
+    } else {
+      status.textContent = 'Failed: ' + (data.detail || 'error');
+    }
+  } catch(e) {
+    status.textContent = 'Connection lost — model reloading...';
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        const h = await fetch('/health');
+        const hd = await h.json();
+        if (hd.status === 'ok') {
+          status.textContent = 'Switched to ' + hd.model_revision;
+          await loadModelInfo();
+          break;
+        }
+      } catch(e2) {}
+    }
+  }
+  sel.disabled = false;
+  setTimeout(() => { status.textContent = ''; }, 8000);
 }
 
 // ── Load speakers from GET /voices ──────────────────────────────────────────
@@ -341,6 +733,7 @@ async function loadSpeakers() {
     const data = await res.json();
     speakers = data.voices || [];
     renderSpeakers();
+    populateInlineSpeakerSelect();
     if (speakers.length && !selectedSpeaker) {
       selectSpeaker(speakers[0].id);
     }
@@ -359,6 +752,7 @@ async function refreshVoices(btn) {
     const data = await res.json();
     speakers = data.voices || [];
     renderSpeakers();
+    populateInlineSpeakerSelect();
     loadModelInfo();
     if (data.updated) {
       btn.innerHTML = '&#10003;';
@@ -380,8 +774,41 @@ async function refreshVoices(btn) {
   }, 2000);
 }
 
+function _speakerTags(s) {
+  const tags = [];
+  // Add description-based tags
+  if (s.description) {
+    // Split by comma or plus and clean
+    const parts = s.description.split(/[,+]+/).map(p => p.trim()).filter(Boolean);
+    tags.push(...parts.slice(0, 3));
+  }
+  // Add language
+  const lang = s.language || s.language_detected;
+  if (lang && LANG_MAP[lang]) {
+    if (!tags.some(t => t.toLowerCase().includes(LANG_MAP[lang].toLowerCase()))) {
+      tags.push(LANG_MAP[lang]);
+    }
+  }
+  // Add gender
+  if (s.gender) {
+    if (!tags.some(t => t.toLowerCase() === s.gender.toLowerCase())) {
+      tags.push(s.gender);
+    }
+  }
+  // Fallback: use language_detected
+  if (tags.length === 0 && s.language_detected) {
+    tags.push(LANG_MAP[s.language_detected] || s.language_detected);
+  }
+  // Fallback: use tags from voice data
+  if (tags.length === 0 && s.tags) {
+    const voiceTags = Array.isArray(s.tags) ? s.tags : [s.tags];
+    tags.push(...voiceTags.slice(0, 3));
+  }
+  return tags.slice(0, 4);
+}
+
 const SOURCE_LABELS = { internal: 'Internal', seiyuu: 'Seiyuu', 'common-voice': 'Common Voice', nexdata: 'Nexdata' };
-const collapsedGroups = new Set();
+const expandedGroups = new Set();
 
 function renderSpeakers() {
   const el = document.getElementById('speaker-list');
@@ -389,8 +816,8 @@ function renderSpeakers() {
 
   if (activeInstruct) {
     const card = document.createElement('div');
-    card.className = 'speaker-card selected';
-    card.innerHTML = `<span class="name" style="color:#3b82f6;font-style:italic">Design: ${esc(activeInstruct)}</span>`;
+    card.className = 'design-card selected';
+    card.innerHTML = `<div class="name">&#10022; ${esc(activeInstruct)}</div><div class="sub">Voice Design (click to deselect)</div>`;
     card.onclick = () => { activeInstruct = null; renderSpeakers(); };
     el.appendChild(card);
   }
@@ -419,14 +846,14 @@ function renderSpeakers() {
   sortedSources.forEach(src => {
     const items = groups[src];
     const label = SOURCE_LABELS[src] || src;
-    const collapsed = collapsedGroups.has(src);
+    const collapsed = !expandedGroups.has(src);
 
     const header = document.createElement('div');
     header.className = 'spk-group-header' + (collapsed ? ' collapsed' : '');
     header.innerHTML = `<span class="label">${label}</span><span class="count">${items.length}</span><span class="arrow">&#9660;</span>`;
     header.onclick = () => {
-      if (collapsedGroups.has(src)) collapsedGroups.delete(src);
-      else collapsedGroups.add(src);
+      if (expandedGroups.has(src)) expandedGroups.delete(src);
+      else expandedGroups.add(src);
       renderSpeakers();
     };
     el.appendChild(header);
@@ -434,11 +861,18 @@ function renderSpeakers() {
     const body = document.createElement('div');
     body.className = 'spk-group-body' + (collapsed ? ' collapsed' : '');
     items.forEach(s => {
+      const tags = _speakerTags(s);
       const card = document.createElement('div');
       card.className = 'speaker-card' + (selectedSpeaker === s.id && !activeInstruct ? ' selected' : '');
+      const tagsHtml = tags.map(t => `<span class="tag">${esc(t)}</span>`).join('');
+      const usageCount = speakerStats[s.name] || 0;
       card.innerHTML = `
-        <span class="name">${esc(s.name)}${s.language_detected ? `<span style="font-size:10px;color:#555;margin-left:4px">${s.language_detected}</span>` : ''}</span>
-        <div class="play-btn" onclick="event.stopPropagation();previewVoice('${s.id}')" title="Preview">&#9654;</div>
+        <div class="card-top">
+          <span class="name">${esc(s.name)}</span>
+          <div class="play-btn" onclick="event.stopPropagation();previewVoice('${s.id}')" title="Preview">&#9654;</div>
+        </div>
+        ${tags.length ? `<div class="tags">${tagsHtml}</div>` : ''}
+        ${usageCount > 0 ? `<div class="usage-count">Used ${usageCount} time${usageCount !== 1 ? 's' : ''}</div>` : ''}
       `;
       card.onclick = () => selectSpeaker(s.id);
       body.appendChild(card);
@@ -451,6 +885,9 @@ function selectSpeaker(id) {
   selectedSpeaker = id;
   activeInstruct = null;
   renderSpeakers();
+  // Update inline speaker dropdown
+  const inlineSel = document.getElementById('inline-speaker');
+  if (inlineSel) inlineSel.value = id;
   // Reset duration slider to Auto on speaker change
   const slider = document.getElementById('param-duration');
   const label = document.getElementById('param-duration-label');
@@ -474,6 +911,31 @@ function selectSpeaker(id) {
   estimateDuration();
 }
 
+function onInlineSpeakerChange(id) {
+  if (id) selectSpeaker(id);
+}
+
+function populateInlineSpeakerSelect() {
+  const sel = document.getElementById('inline-speaker');
+  sel.innerHTML = '<option value="">Select...</option>';
+  speakers.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name;
+    if (selectedSpeaker === s.id) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function onSpeedSliderChange(val) {
+  document.getElementById('speed-val').textContent = parseFloat(val).toFixed(1) + 'x';
+}
+function onTextInput() {
+  const text = document.getElementById('text-input').value;
+  document.getElementById('char-count').textContent = text.length;
+  debounceEstimate();
+}
+
 // ── Load quotes from GET /api/quotes ────────────────────────────────────────
 async function loadQuotes() {
   try {
@@ -488,38 +950,69 @@ async function loadQuotes() {
 }
 
 function renderPresets() {
-  const el = document.getElementById('preset-list');
-  el.innerHTML = '';
+  const tabsEl = document.getElementById('preset-tabs');
+  const chipsEl = document.getElementById('preset-chips-row');
+  tabsEl.innerHTML = '';
+  chipsEl.innerHTML = '';
+
   const catOrder = ['Tone', 'Digits', 'Entity', 'Code-mixing', 'Quoted words', 'Long text', 'General'];
+
+  // Build tab chips
   catOrder.forEach(cat => {
     const items = categories[cat];
     if (!items || !items.length) return;
-    const group = document.createElement('div');
-    group.className = 'preset-group';
-
-    const label = document.createElement('div');
-    label.className = 'preset-cat';
-    label.textContent = cat;
-
-    const chips = document.createElement('div');
-    chips.className = 'preset-chips';
-    items.forEach(q => {
-      const chip = document.createElement('span');
-      chip.className = 'preset-chip';
-      chip.textContent = q;
-      chip.title = q;
-      chip.onclick = () => {
-        document.getElementById('text-input').value = q;
-        el.querySelectorAll('.preset-chip').forEach(c => c.classList.remove('selected'));
-        chip.classList.add('selected');
-      };
-      chips.appendChild(chip);
-    });
-
-    group.appendChild(label);
-    group.appendChild(chips);
-    el.appendChild(group);
+    const tab = document.createElement('span');
+    tab.className = 'preset-tab' + (cat === 'Tone' ? ' active' : '');
+    tab.textContent = cat;
+    tab.onclick = () => {
+      tabsEl.querySelectorAll('.preset-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      renderPresetChipsForCategory(cat, chipsEl);
+    };
+    tabsEl.appendChild(tab);
   });
+
+  // Add Surprise Me tab
+  const surpriseTab = document.createElement('span');
+  surpriseTab.className = 'preset-tab';
+  surpriseTab.innerHTML = '&#127922; Surprise Me';
+  surpriseTab.onclick = () => surprisePreset();
+  tabsEl.appendChild(surpriseTab);
+
+  // Show first category chips
+  const firstCat = catOrder.find(c => categories[c] && categories[c].length);
+  if (firstCat) renderPresetChipsForCategory(firstCat, chipsEl);
+}
+
+function renderPresetChipsForCategory(cat, el) {
+  el.innerHTML = '';
+  const items = categories[cat];
+  if (!items || !items.length) return;
+  items.forEach(q => {
+    const chip = document.createElement('span');
+    chip.className = 'preset-chip';
+    chip.textContent = q;
+    chip.title = q;
+    chip.onclick = () => {
+      document.getElementById('text-input').value = q;
+      document.getElementById('char-count').textContent = q.length;
+      el.querySelectorAll('.preset-chip').forEach(c => c.classList.remove('selected'));
+      chip.classList.add('selected');
+      debounceEstimate();
+    };
+    el.appendChild(chip);
+  });
+}
+
+function surprisePreset() {
+  // Pick a random quote
+  if (!quotes.length) return;
+  const q = quotes[Math.floor(Math.random() * quotes.length)];
+  document.getElementById('text-input').value = q;
+  document.getElementById('char-count').textContent = q.length;
+  debounceEstimate();
+  // Deselect all tabs
+  document.querySelectorAll('.preset-tab').forEach(t => t.classList.remove('active'));
 }
 
 // ── Preview voice (small generate call) ─────────────────────────────────────
@@ -554,7 +1047,7 @@ async function generate() {
     const normPromise = fetch('/api/normalize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, language: _detectLang() }),
+      body: JSON.stringify({ text }),
     }).then(r => r.json()).then(data => {
       if (data.normalized && data.normalized !== text) {
         normContent.textContent = data.normalized;
@@ -564,15 +1057,22 @@ async function generate() {
       }
     }).catch(() => { normEl.style.display = 'none'; });
 
+    const p = _collectParams(text);
+    const exportFormat = document.getElementById('export-format').value;
+
     const body = {
-      text,
-      voice_ref_path: selectedSpeaker || undefined,
-      instruct: activeInstruct || undefined,
-      language: _detectLang(),
-      temperature: _num('param-temp', 0.3),
+      text: p.text,
+      voice_ref_path: p.voiceId !== 'anwar' || selectedSpeaker ? p.voiceId : undefined,
+      instruct: p.instruct || undefined,
+      temperature: p.classTemperature,
       target_lufs: _num('param-lufs', -23),
-      duration: _getDuration(),
-      ..._speedModeParams(),
+      duration: p.duration,
+      num_step: p.speedMode,
+      layer_penalty_factor: p.layerPenalty,
+      preprocess_prompt: p.preprocess,
+      postprocess_output: p.postprocess,
+      audio_chunk_duration: p.chunkDur,
+      audio_chunk_threshold: p.chunkThresh,
     };
 
     const t0 = performance.now();
@@ -602,6 +1102,10 @@ async function generate() {
     document.getElementById('audio-viz').style.display = 'block';
     document.getElementById('save-speaker-link').style.display = lastWasDesign ? 'inline' : 'none';
     _initWavesurfer(blob, latencyMs, serverLatency, serverRTF);
+
+    // Add to audio history
+    addToAudioHistory(text, blob, selectedSpeaker || activeInstruct, latencyMs, serverLatency, serverRTF);
+
   } catch (e) {
     errorBox.innerHTML = `<div class="error">${esc(e.message)}</div>`;
   } finally {
@@ -655,6 +1159,7 @@ async function streamGenerate() {
   errorBox.innerHTML = '';
   log.innerHTML = '';
   stats.textContent = '';
+  document.getElementById('normalized-text').style.display = 'none';
   debugPanel.style.display = 'block';
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Streaming...';
@@ -663,6 +1168,21 @@ async function streamGenerate() {
     const text = document.getElementById('text-input').value.trim();
     if (!text) throw new Error('Please enter text or select a preset');
     if (!selectedSpeaker && !activeInstruct) throw new Error('Please select a speaker or design a voice');
+
+    // Show normalized text
+    const p = _collectParams(text);
+    fetch('/api/normalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    }).then(r => r.json()).then(data => {
+      const normEl = document.getElementById('normalized-text');
+      const normContent = document.getElementById('normalized-text-content');
+      if (data.normalized && data.normalized !== text) {
+        normContent.textContent = data.normalized;
+        normEl.style.display = 'block';
+      }
+    }).catch(() => {});
 
     const wsUrl = location.protocol.replace('http', 'ws') + '//' + location.host + '/tts/websocket';
     _streamLog(log, 'WS', 'Connecting to ' + wsUrl, '#888');
@@ -676,15 +1196,26 @@ async function streamGenerate() {
 
     await new Promise((resolve, reject) => {
       ws.onopen = () => {
-        const speedParams = _speedModeParams();
         const payload = {
-          transcript: text,
-          voice: { mode: 'id', id: selectedSpeaker || 'anwar' },
-          output_format: { container: 'raw', encoding: 'pcm_s16le', sample_rate: 24000 },
+          transcript: p.text,
+          voice: { mode: 'id', id: p.voiceId },
           context_id: ctxId,
           continue: false,
-          language: _detectLang(),
-          num_step: speedParams.num_step,
+          mode: p.mode,
+          instruct: p.instruct,
+          speed: p.speed,
+          num_step: p.speedMode,
+          duration: p.duration,
+          class_temperature: p.classTemperature,
+          guidance_scale: p.guidanceScale,
+          denoise: p.denoise,
+          t_shift: p.tShift,
+          position_temperature: p.posTemp,
+          layer_penalty_factor: p.layerPenalty,
+          preprocess_prompt: p.preprocess,
+          postprocess_output: p.postprocess,
+          audio_chunk_duration: p.chunkDur,
+          audio_chunk_threshold: p.chunkThresh,
         };
         _streamLog(log, 'SEND', JSON.stringify(payload).substring(0, 120) + '...', '#5588ff');
         ws.send(JSON.stringify(payload));
@@ -740,11 +1271,385 @@ async function streamGenerate() {
     document.getElementById('audio-viz').style.display = 'block';
     document.getElementById('save-speaker-link').style.display = lastWasDesign ? 'inline' : 'none';
     _initWavesurfer(blob);
+
+    // Add to audio history
+    const elapsed = ((performance.now() - startTime) / 1000);
+    addToAudioHistory(text, blob, selectedSpeaker || activeInstruct, elapsed * 1000, null, null);
+
   } catch (e) {
     errorBox.innerHTML = `<div class="error">${esc(e.message)}</div>`;
   } finally {
     btn.disabled = false;
     btn.innerHTML = 'Stream';
+  }
+}
+
+// ── Audio History ───────────────────────────────────────────────────────────
+async function addToAudioHistory(text, blob, speakerId, latencyMs, serverLatency, serverRTF) {
+  audioHistoryVersion++;
+  const speakerName = speakers.find(s => s.id === speakerId)?.name || speakerId || 'Design';
+  const entry = {
+    id: null, // will be set from backend
+    version: audioHistoryVersion,
+    text: text,
+    blob: blob,
+    speakerId: speakerId,
+    speakerName: speakerName,
+    timestamp: new Date(),
+    latencyMs: latencyMs,
+    serverLatency: serverLatency,
+    serverRTF: serverRTF,
+    duration: null, // will be filled from wavesurfer or blob size
+  };
+
+  // Estimate duration from blob size (16-bit 24kHz mono WAV)
+  // WAV size = 44 header + (sampleRate * 2 * duration)
+  if (blob.size > 44) {
+    entry.duration = (blob.size - 44) / (24000 * 2);
+  }
+
+  // Persist to backend
+  try {
+    const reader = new FileReader();
+    const b64 = await new Promise((resolve, reject) => {
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    const res = await fetch('/api/history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        audio_base64: b64,
+        text: entry.text,
+        speaker_name: entry.speakerName,
+        format: 'wav',
+        created_at: entry.timestamp.toISOString(),
+        version: entry.version,
+        duration: entry.duration || 0,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      entry.id = data.id;
+    }
+  } catch (e) {
+    console.error('Failed to persist history:', e);
+    // Fallback to local-only ID
+    entry.id = Date.now().toString();
+  }
+
+  audioHistory.unshift(entry);
+  audioHistoryVisible = AUDIO_HISTORY_PER_PAGE;
+  renderAudioHistory();
+  renderHistorySidebar();
+}
+
+function renderAudioHistory() {
+  const section = document.getElementById('audio-history-section');
+  const cardsEl = document.getElementById('audio-cards');
+  const countEl = document.getElementById('audio-count');
+  const loadMoreWrap = document.getElementById('load-more-wrap');
+
+  if (audioHistory.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+
+  section.style.display = 'block';
+  countEl.textContent = audioHistory.length;
+
+  const sort = document.getElementById('audio-sort').value;
+  const sorted = [...audioHistory];
+  if (sort === 'oldest') sorted.reverse();
+
+  const visible = sorted.slice(0, audioHistoryVisible);
+  loadMoreWrap.style.display = sorted.length > audioHistoryVisible ? 'block' : 'none';
+
+  cardsEl.innerHTML = '';
+  visible.forEach((entry, idx) => {
+    const card = document.createElement('div');
+    card.className = 'audio-card';
+
+    const textSnippet = entry.text.length > 80 ? entry.text.substring(0, 80) + '...' : entry.text;
+    const duration = entry.duration ? entry.duration.toFixed(1) + 's' : '--';
+    const timeAgo = _timeAgo(entry.timestamp);
+
+    card.innerHTML = `
+      <div class="audio-card-top">
+        <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">
+          <span class="audio-card-title">${esc(textSnippet)}</span>
+          <span class="audio-card-version">v${entry.version}</span>
+        </div>
+        <span class="audio-card-status">Completed</span>
+      </div>
+      <div class="audio-card-waveform" id="mini-waveform-${entry.id}"></div>
+      <div class="audio-card-bottom">
+        <div class="audio-card-meta">
+          <span class="duration">${duration}</span>
+          <span class="speaker">${esc(entry.speakerName)}</span>
+          <span class="time-ago">${timeAgo}</span>
+        </div>
+        <div class="audio-card-actions">
+          <button onclick="playHistoryItem('${entry.id}')" title="Play">&#9654;</button>
+          <button onclick="downloadHistoryItem('${entry.id}')" title="Download">&#8595;</button>
+          <button onclick="regenerateHistoryItem('${entry.id}')" title="Regenerate">&#8635;</button>
+        </div>
+      </div>
+    `;
+    cardsEl.appendChild(card);
+
+    // Create mini waveform
+    if (entry.blob) {
+      try {
+        const url = URL.createObjectURL(entry.blob);
+        const ws = WaveSurfer.create({
+          container: `#mini-waveform-${entry.id}`,
+          waveColor: '#3b82f6',
+          progressColor: '#1d4ed8',
+          height: 36,
+          barWidth: 2,
+          barGap: 1,
+          barRadius: 2,
+          url: url,
+          interact: false,
+        });
+      } catch(e) {}
+    } else {
+      // Show placeholder for lazy-loaded entries
+      const wfEl = document.getElementById(`mini-waveform-${entry.id}`);
+      if (wfEl) {
+        wfEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#444;font-size:10px">Click play to load</div>';
+      }
+    }
+  });
+}
+
+function loadMoreAudio() {
+  audioHistoryVisible += AUDIO_HISTORY_PER_PAGE;
+  renderAudioHistory();
+}
+
+function playHistoryItem(id) {
+  const entry = audioHistory.find(e => e.id === id);
+  if (!entry) return;
+
+  if (entry.blob) {
+    playBlob(entry.blob, entry);
+  } else {
+    // Fetch audio from backend on demand
+    fetch(`/api/history/${id}/audio`)
+      .then(r => {
+        if (!r.ok) throw new Error('Audio not found');
+        return r.blob();
+      })
+      .then(blob => {
+        entry.blob = blob;
+        playBlob(blob, entry);
+      })
+      .catch(e => console.error('Failed to load audio:', e));
+  }
+}
+
+function playBlob(blob, entry) {
+  lastGeneratedBlob = blob;
+  _revokeBlobUrl();
+  const url = URL.createObjectURL(blob);
+  _blobUrl = url;
+  document.getElementById('download-btn').disabled = false;
+  document.getElementById('audio-viz').style.display = 'block';
+  document.getElementById('save-speaker-link').style.display = 'none';
+  const latency = entry ? entry.latencyMs : null;
+  const sLatency = entry ? entry.serverLatency : null;
+  const sRTF = entry ? entry.serverRTF : null;
+  _initWavesurfer(blob, latency, sLatency, sRTF);
+}
+
+function downloadHistoryItem(id) {
+  const entry = audioHistory.find(e => e.id === id);
+  if (!entry) return;
+
+  if (entry.blob) {
+    downloadBlob(entry.blob, entry);
+  } else {
+    // Fetch audio from backend on demand
+    fetch(`/api/history/${id}/audio`)
+      .then(r => {
+        if (!r.ok) throw new Error('Audio not found');
+        return r.blob();
+      })
+      .then(blob => {
+        entry.blob = blob;
+        downloadBlob(blob, entry);
+      })
+      .catch(e => console.error('Failed to load audio for download:', e));
+  }
+}
+
+function downloadBlob(blob, entry) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const ext = (entry && entry.format) || 'wav';
+  a.download = `speech_v${entry ? entry.version : '0'}.${ext}`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function regenerateHistoryItem(id) {
+  const entry = audioHistory.find(e => e.id === id);
+  if (!entry) return;
+  document.getElementById('text-input').value = entry.text;
+  document.getElementById('char-count').textContent = entry.text.length;
+  if (entry.speakerId && speakers.find(s => s.id === entry.speakerId)) {
+    selectSpeaker(entry.speakerId);
+  }
+  generate();
+}
+
+function renderHistorySidebar() {
+  const el = document.getElementById('history-list');
+  if (audioHistory.length === 0) {
+    el.innerHTML = '<div style="font-size:11px;color:#555;text-align:center;padding:20px 0">No history yet</div>';
+    return;
+  }
+  el.innerHTML = '';
+  const recent = audioHistory.slice(0, 10);
+  recent.forEach(entry => {
+    const item = document.createElement('div');
+    item.className = 'history-item';
+    item.onclick = () => playHistoryItem(entry.id);
+    const ts = entry.timestamp instanceof Date ? entry.timestamp : new Date(entry.timestamp);
+    const timeStr = ts.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const textSnippet = entry.text.length > 40 ? entry.text.substring(0, 40) + '...' : entry.text;
+    item.innerHTML = `
+      <div class="history-item-top">
+        <span class="history-item-version">v${entry.version}</span>
+        <span class="history-item-time">${timeStr}</span>
+      </div>
+      <div class="history-item-text">${esc(textSnippet)}</div>
+    `;
+    el.appendChild(item);
+  });
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch('/api/history');
+    const data = await res.json();
+    audioHistory = data.entries.map(e => ({
+      id: e.id,
+      version: e.version || 0,
+      text: e.text,
+      blob: null,
+      speakerId: null,
+      speakerName: e.speaker_name,
+      timestamp: new Date(e.created_at),
+      latencyMs: null,
+      serverLatency: null,
+      serverRTF: null,
+      duration: e.duration,
+      format: e.format || 'wav',
+    }));
+    audioHistoryVersion = audioHistory.length > 0 ? Math.max(...audioHistory.map(e => e.version)) : 0;
+    renderAudioHistory();
+    renderHistorySidebar();
+  } catch (e) {
+    console.error('Failed to load history:', e);
+  }
+}
+
+async function clearHistory() {
+  for (const entry of audioHistory) {
+    try { await fetch(`/api/history/${entry.id}`, { method: 'DELETE' }); } catch {}
+  }
+  audioHistory = [];
+  audioHistoryVersion = 0;
+  renderHistorySidebar();
+  renderAudioHistory();
+}
+
+function _timeAgo(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const diffMs = now - d;
+  const diffS = Math.floor(diffMs / 1000);
+  if (diffS < 60) return 'just now';
+  const diffM = Math.floor(diffS / 60);
+  if (diffM < 60) return `${diffM}m ago`;
+  const diffH = Math.floor(diffM / 60);
+  if (diffH < 24) return `${diffH}h ago`;
+  const diffD = Math.floor(diffH / 24);
+  return `${diffD}d ago`;
+}
+
+// ── Export format toggle ────────────────────────────────────────────────────
+document.getElementById('export-format').addEventListener('change', function() {
+  const qualityRow = document.getElementById('quality-row');
+  qualityRow.style.display = this.value !== 'wav' ? 'block' : 'none';
+});
+
+function showToast(message, duration) {
+  duration = duration || 2500;
+  var el = document.createElement('div');
+  el.className = 'toast-notification';
+  el.textContent = message;
+  document.body.appendChild(el);
+  requestAnimationFrame(function() { el.classList.add('visible'); });
+  setTimeout(function() {
+    el.classList.remove('visible');
+    setTimeout(function() { el.remove(); }, 300);
+  }, duration);
+}
+
+async function shareLink() {
+  const text = document.getElementById('text-input').value.trim();
+  if (!text) { alert('Enter text first'); return; }
+  if (!lastGeneratedBlob) { alert('Generate audio first'); return; }
+
+  const speaker = selectedSpeaker || activeInstruct || 'Unknown';
+  const fmt = document.getElementById('export-format').value;
+
+  try {
+    // Convert blob to base64
+    const reader = new FileReader();
+    const b64 = await new Promise((resolve, reject) => {
+      reader.onload = () => {
+        const dataUrl = reader.result;
+        resolve(dataUrl.split(',')[1]);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(lastGeneratedBlob);
+    });
+
+    const res = await fetch('/api/share', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        audio_base64: b64,
+        text: text,
+        speaker_name: speaker,
+        format: fmt,
+        created_at: new Date().toISOString(),
+        duration: _getDuration() || undefined,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error?.message || err.detail || 'Share failed');
+    }
+
+    const data = await res.json();
+    const shareUrl = data.url || (window.location.origin + '/share/' + data.share_id);
+
+    try { await navigator.clipboard.writeText(shareUrl); } catch { var ta=document.createElement("textarea"); ta.value=shareUrl; ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); }
+    showToast('Share link copied to clipboard');
+  } catch (e) {
+    alert('Share failed: ' + e.message);
   }
 }
 
@@ -811,6 +1716,7 @@ function applyDesign() {
   activeInstruct = val;
   selectedSpeaker = null;
   renderSpeakers();
+  populateInlineSpeakerSelect();
   hideDesignModal();
 }
 
@@ -828,7 +1734,9 @@ function downloadAudio() {
   const url = URL.createObjectURL(lastGeneratedBlob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'speech.wav';
+  const fmt = document.getElementById('export-format').value;
+  const ext = fmt === 'mp3' ? 'mp3' : fmt === 'opus' ? 'opus' : 'wav';
+  a.download = `speech.${ext}`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -861,25 +1769,66 @@ async function saveAsSpeaker() {
 
 // ── Utils ───────────────────────────────────────────────────────────────────
 function esc(s) {
-  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 function _num(id, fallback) {
   const v = parseFloat(document.getElementById(id).value);
   return isFinite(v) ? v : fallback;
 }
-function _speedModeParams() {
-  const mode = document.getElementById('param-speed-mode').value;
-  if (mode === 'turbo') return { num_step: 4 };
-  if (mode === 'fast') return { num_step: 10 };
-  if (mode === 'normal') return { num_step: 16 };
-  return { num_step: 32 };
+function _optionalNum(id) {
+  const v = parseFloat(document.getElementById(id).value);
+  return isFinite(v) ? v : null;
 }
-function _detectLang() {
-  const s = speakers.find(v => v.id === selectedSpeaker);
-  const ld = s && s.language_detected;
-  if (ld === 'ms') return 'ms';
-  if (ld === 'ja') return 'en';
-  return 'en';
+function _optionalBool(id) {
+  const v = document.getElementById(id).value;
+  return v === '' ? null : v === 'true';
+}
+function _numStepFromMode() {
+  const mode = document.getElementById('param-speed-mode').value;
+  if (mode === 'turbo') return 4;
+  if (mode === 'fast') return 10;
+  if (mode === 'normal') return 16;
+  return 32;
+}
+// Centralized param collection — single source of truth for Generate + Stream
+function _collectParams(text) {
+  const speedMode = _numStepFromMode();
+  const duration = _getDuration();
+
+  // Advanced params (null = use server default)
+  const classTemperature = _num('param-class-temp', 0.3);
+  const guidanceScale = _optionalNum('param-guidance-scale');
+  const tShift = _optionalNum('param-t-shift');
+  const posTemp = _optionalNum('param-pos-temp');
+  const layerPenalty = _optionalNum('param-layer-penalty');
+  const denoise = _optionalBool('param-denoise');
+  const preprocess = _optionalBool('param-preprocess');
+  const postprocess = _optionalBool('param-postprocess');
+  const chunkDur = _optionalNum('param-chunk-dur');
+  const chunkThresh = _optionalNum('param-chunk-thresh');
+  const speed = parseFloat(document.getElementById('param-speed-slider').value) || 1.0;
+
+  const mode = activeInstruct ? 'design' : 'clone';
+  const instruct = activeInstruct || null;
+  const voiceId = selectedSpeaker || 'anwar';
+
+  return {
+    text, mode, instruct, voiceId, speed, speedMode, duration,
+    classTemperature, guidanceScale, tShift, posTemp, layerPenalty,
+    denoise, preprocess, postprocess, chunkDur, chunkThresh,
+  };
+}
+
+function toggleAdvanced() {
+  const el = document.getElementById('advanced-params');
+  const btn = document.getElementById('settings-toggle');
+  if (el.classList.contains('visible')) {
+    el.classList.remove('visible');
+    btn.classList.remove('open');
+  } else {
+    el.classList.add('visible');
+    btn.classList.add('open');
+  }
 }
 
 let estimatedDurationS = 0;

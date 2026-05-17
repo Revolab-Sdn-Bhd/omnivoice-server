@@ -22,6 +22,17 @@ from dataclasses import dataclass
 import torch
 
 from ..config import Settings
+from ..observability.tracer import (
+    build_synthesis_input,
+    build_synthesis_output,
+    get_langfuse_client,
+    is_enabled,
+)
+
+try:
+    from langfuse.types import TraceContext
+except ImportError:
+    TraceContext = None
 from .model import ModelService
 
 logger = logging.getLogger(__name__)
@@ -54,6 +65,8 @@ class SynthesisRequest:
     postprocess_output: bool | None = None
     audio_chunk_duration: float | None = None
     audio_chunk_threshold: float | None = None
+    seed: int | None = None  # Fix random seed for deterministic output
+    _trace_id: str | None = None  # Langfuse trace_id for nested span creation
 
 
 @dataclass
@@ -83,6 +96,11 @@ class OmniVoiceAdapter:
 
     def build_kwargs(self, req: SynthesisRequest, model) -> dict:
         """Return kwargs dict ready to pass to model.generate()."""
+        from ..utils.text import detect_language, normalize_for_tts
+
+        detected_lang = detect_language(req.text)
+        text = normalize_for_tts(req.text, language=detected_lang)
+
         num_step = req.num_step or self._cfg.num_step
         guidance_scale = (
             req.guidance_scale if req.guidance_scale is not None else self._cfg.guidance_scale
@@ -99,9 +117,14 @@ class OmniVoiceAdapter:
             if req.class_temperature is not None
             else self._cfg.class_temperature
         )
+        layer_penalty_factor = (
+            req.layer_penalty_factor
+            if req.layer_penalty_factor is not None
+            else self._cfg.layer_penalty_factor
+        )
 
         kwargs: dict = {
-            "text": req.text,
+            "text": text,
             "num_step": num_step,
             "speed": req.speed,
             "guidance_scale": guidance_scale,
@@ -109,20 +132,19 @@ class OmniVoiceAdapter:
             "t_shift": t_shift,
             "position_temperature": position_temperature,
             "class_temperature": class_temperature,
+            "layer_penalty_factor": layer_penalty_factor,
         }
 
         # Add optional duration parameter if provided
         if req.duration is not None:
-            kwargs["duration"] = req.duration
+            num_commas = text.count(",")
+            kwargs["duration"] = req.duration + (num_commas * 0.5)
 
-        # Add optional language parameter if provided
-        if req.language is not None:
-            kwargs["language"] = req.language
-
-        if req.layer_penalty_factor is not None:
-            kwargs["layer_penalty_factor"] = req.layer_penalty_factor
-        if req.preprocess_prompt is not None:
-            kwargs["preprocess_prompt"] = req.preprocess_prompt
+        # language=None for model — let omnivoice handle it natively
+        kwargs["preprocess_prompt"] = (
+            req.preprocess_prompt if req.preprocess_prompt is not None
+            else self._cfg.preprocess_prompt
+        )
         if req.postprocess_output is not None:
             kwargs["postprocess_output"] = req.postprocess_output
         if req.audio_chunk_duration is not None:
@@ -466,19 +488,70 @@ class InferenceService:
 
     def _run_sync(self, req: SynthesisRequest) -> SynthesisResult:
         """Blocking inference. Runs in thread pool thread."""
+        span = None
+        if is_enabled() and req._trace_id:
+            client = get_langfuse_client()
+            if client:
+                tc = TraceContext(trace_id=req._trace_id) if TraceContext else None
+                kwargs = dict(
+                    name="inference.synthesize",
+                    input=build_synthesis_input(
+                        text=req.text,
+                        voice=req.ref_audio_path or "design",
+                        mode=req.mode,
+                        speed=req.speed,
+                        num_step=req.num_step or self._cfg.num_step,
+                        guidance_scale=req.guidance_scale or self._cfg.guidance_scale,
+                        denoise=req.denoise,
+                        t_shift=req.t_shift,
+                        language=req.language,
+                    ),
+                )
+                if tc:
+                    kwargs["trace_context"] = tc
+                span = client.start_observation(**kwargs)
+
         t0 = time.monotonic()
         model = self._model_svc.model
 
+        if req.seed is not None:
+            torch.manual_seed(req.seed)
+
         try:
             tensors = self._adapter.call(req, model)
+        except Exception as exc:
+            if span:
+                span.update(
+                    status="error",
+                    output={"error": f"{type(exc).__name__}: {exc}"},
+                )
+                span.end()
+            raise
         finally:
             if self._executor is not None:
                 _cleanup_memory(self._cfg.device)
 
         duration_s = sum(t.shape[-1] for t in tensors) / 24_000
         latency_s = time.monotonic() - t0
-
         rtf = latency_s / duration_s if duration_s > 0 else float("inf")
+
+        if span:
+            from ..utils.audio import tensors_to_wav_bytes
+
+            wav_bytes = tensors_to_wav_bytes(tensors)
+            span.update(output=build_synthesis_output(
+                tensors=tensors,
+                wav_bytes=wav_bytes,
+                latency_s=latency_s,
+                text=req.text,
+                voice=req.ref_audio_path or "design",
+                mode=req.mode,
+                speed=req.speed,
+                device=self._cfg.device,
+                extra={"num_tensors": len(tensors)},
+            ))
+            span.end()
+
         logger.debug(
             f"Synthesized {duration_s:.2f}s audio in {latency_s:.2f}s "
             f"(RTF={rtf:.3f})"

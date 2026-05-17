@@ -46,32 +46,24 @@ def normalize_loudness(
 
 
 def tensor_to_wav_bytes(tensor: torch.Tensor) -> bytes:
-    """
-    Convert (1, T) float32 tensor to 16-bit PCM WAV bytes.
-    """
+    """Convert (1, T) float32 tensor to 16-bit PCM WAV bytes via stdlib wave."""
+    import struct
+    import wave
+
     cpu_tensor = tensor.cpu()
     if cpu_tensor.dim() == 1:
         cpu_tensor = cpu_tensor.unsqueeze(0)
 
-    import tempfile
+    pcm = (cpu_tensor.squeeze(0).clamp(-1.0, 1.0) * 32767).to(torch.int16)
+    raw_bytes = struct.pack(f"<{pcm.numel()}h", *pcm.tolist())
 
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp_path = tmp.name
-    try:
-        torchaudio.save(
-            tmp_path,
-            cpu_tensor,
-            SAMPLE_RATE,
-            format="wav",
-            encoding="PCM_S",
-            bits_per_sample=16,
-        )
-        with open(tmp_path, "rb") as f:
-            return f.read()
-    finally:
-        import os
-
-        os.unlink(tmp_path)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(raw_bytes)
+    return buf.getvalue()
 
 
 def _postprocess(
@@ -91,19 +83,31 @@ def tensors_to_wav_bytes(
     Concatenate multiple (1, T) tensors into a single WAV.
     Applies LUFS normalization.
     """
-    if len(tensors) == 1:
-        combined = tensors[0].cpu()
+    def _to_tensor(t):
+        if isinstance(t, torch.Tensor):
+            return t.cpu()
+        import numpy as np
+        return torch.from_numpy(t).float() if isinstance(t, np.ndarray) else torch.as_tensor(t).float()
+
+    converted = [_to_tensor(t) for t in tensors]
+    if len(converted) == 1:
+        combined = converted[0]
     else:
-        combined = torch.cat([t.cpu() for t in tensors], dim=-1)
+        combined = torch.cat(converted, dim=-1)
     combined = _postprocess(combined, target_lufs=target_lufs)
     return tensor_to_wav_bytes(combined)
 
 
-def tensor_to_pcm16_bytes(tensor: torch.Tensor) -> bytes:
+def tensor_to_pcm16_bytes(tensor) -> bytes:
     """
     Convert (1, T) float32 tensor to raw PCM int16 bytes.
     Used for streaming — no WAV header, continuous byte stream.
     """
+    import numpy as np
+
+    if isinstance(tensor, np.ndarray):
+        flat = tensor.squeeze().astype(np.float32)
+        return (flat * 32767).clip(-32768, 32767).astype(np.int16).tobytes()
     flat = tensor.squeeze(0).cpu()  # (T,)
     return (flat * 32767).clamp(-32768, 32767).to(torch.int16).numpy().tobytes()
 

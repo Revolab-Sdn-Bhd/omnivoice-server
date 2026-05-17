@@ -6,7 +6,6 @@ POST /v1/audio/speech — OpenAI-compatible TTS (with optional SSE streaming)
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import time
@@ -18,10 +17,28 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
+from ..observability.tracer import (
+    build_synthesis_output,
+    get_current_trace_id,
+    get_observe,
+    update_current_trace,
+)
 from ..services.inference import InferenceService, QueueFullError, SynthesisRequest
 from ..services.metrics import MetricsService
 from ..utils.audio import encode_tensors, tensors_to_wav_bytes
-from ..utils.text import normalize_for_tts
+from ._shared import (  # noqa: I001
+    build_synthesis_request,
+    tensor_to_base64_float32,
+)
+from ._shared import (
+    get_cfg as _get_cfg,
+)
+from ._shared import (
+    get_inference_svc as _get_inference,
+)
+from ._shared import (
+    get_metrics_svc as _get_metrics,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -46,58 +63,7 @@ class OpenAISpeechRequest(BaseModel):
     max_tokens: int = Field(default=1000, ge=1)
     chunk_size: int = Field(default=0, ge=0)
     language: str = Field(default="en", pattern=r"^(en|ms|mixed)$")
-
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-
-def _get_inference(request: Request) -> InferenceService:
-    return request.app.state.inference_svc
-
-
-def _get_metrics(request: Request) -> MetricsService:
-    return request.app.state.metrics_svc
-
-
-def _get_cfg(request: Request):
-    return request.app.state.cfg
-
-
-def _resolve_voice(voice_id: str, cfg) -> tuple[str | None, str | None]:
-    """Resolve voice ID to (wav_path, ref_text)."""
-    wav_path = cfg.voices_dir / f"{voice_id}.wav"
-    if not wav_path.is_file():
-        return None, None
-    txt_path = wav_path.with_suffix(".txt")
-    ref_text = txt_path.read_text().strip() if txt_path.exists() else ""
-    return str(wav_path), ref_text
-
-
-def _build_synthesis_req(body: OpenAISpeechRequest, cfg) -> SynthesisRequest:
-    """Map OpenAI speech request to OmniVoice SynthesisRequest."""
-    audio_path, ref_text = _resolve_voice(body.voice, cfg)
-
-    if audio_path:
-        mode = "clone"
-    else:
-        mode = "design"
-
-    return SynthesisRequest(
-        text=normalize_for_tts(body.input, language=body.language),
-        mode=mode,
-        ref_audio_path=audio_path,
-        ref_text=ref_text,
-        speed=body.speed,
-        class_temperature=body.temperature if body.temperature != 0.3 else None,
-    )
-
-
-def _tensor_to_base64_float32(tensor) -> str:
-    """Convert tensor to base64-encoded raw float32 PCM bytes."""
-    import numpy as np
-
-    flat = tensor.squeeze(0).cpu().float().numpy()
-    return base64.b64encode(flat.astype(np.float32).tobytes()).decode("ascii")
+    seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
 
 
 # ── GET /v1/audio/voices ─────────────────────────────────────────────────────
@@ -124,6 +90,7 @@ async def list_audio_voices(cfg=Depends(_get_cfg)):
 
 
 @router.post("/audio/speech", tags=["OpenAI-compatible"])
+@get_observe()(capture_output=False)
 async def create_speech(
     request: Request,
     body: OpenAISpeechRequest,
@@ -136,18 +103,17 @@ async def create_speech(
     client = request.client.host if request.client else "unknown"
     t0 = time.monotonic()
 
+    update_current_trace(metadata={
+        "voice": body.voice,
+        "format": body.response_format,
+        "stream": stream,
+        "language": body.language,
+    })
+
     if len(body.input) > 10_000:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Input exceeds 10,000 characters",
-        )
-
-    # Validate voice exists
-    audio_path, _ = _resolve_voice(body.voice, cfg)
-    if not audio_path:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Voice '{body.voice}' not found",
         )
 
     logger.info(
@@ -156,8 +122,9 @@ async def create_speech(
     )
 
     if stream:
+        trace_id = get_current_trace_id()
         return StreamingResponse(
-            _stream_sse(body, inference_svc, metrics_svc, cfg, client, t0),
+            _stream_sse(body, inference_svc, metrics_svc, cfg, client, t0, trace_id),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -166,7 +133,21 @@ async def create_speech(
             },
         )
 
-    syn_req = _build_synthesis_req(body, cfg)
+    syn_req = build_synthesis_request(
+        text=body.input,
+        cfg=cfg,
+        voice_ref=body.voice,
+        speed=body.speed,
+        class_temperature=body.temperature if body.temperature != 0.3 else None,
+        seed=body.seed,
+        _trace_id=get_current_trace_id(),
+    )
+
+    if not syn_req.ref_audio_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Voice '{body.voice}' not found",
+        )
 
     try:
         timeout_s = cfg.request_timeout_s
@@ -175,12 +156,14 @@ async def create_speech(
         )
         metrics_svc.record_success(result.latency_s)
     except QueueFullError as e:
+        update_current_trace(metadata={"error": f"QueueFullError: {e}"})
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(e),
         )
     except asyncio.TimeoutError:
         metrics_svc.record_timeout()
+        update_current_trace(metadata={"error": f"TimeoutError: {cfg.request_timeout_s}s"})
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=f"Synthesis timed out after {cfg.request_timeout_s}s",
@@ -188,6 +171,7 @@ async def create_speech(
     except Exception as e:
         metrics_svc.record_error()
         logger.exception("Synthesis failed")
+        update_current_trace(metadata={"error": f"{type(e).__name__}: {e}"})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Synthesis failed: {e}",
@@ -197,6 +181,38 @@ async def create_speech(
     logger.info(
         "[speech] client=%s voice=%s synthesis=%.3fs chars=%d",
         client, body.voice, elapsed, len(body.input),
+    )
+
+    # Attach audio + metrics to root trace (following ChatterBox pattern)
+    wav_for_trace = tensors_to_wav_bytes(result.tensors)
+    trace_output = build_synthesis_output(
+        tensors=result.tensors,
+        wav_bytes=wav_for_trace,
+        latency_s=result.latency_s,
+        text=body.input,
+        voice=body.voice,
+        mode="clone",
+        speed=body.speed,
+        device="cuda",
+        extra={
+            "format": body.response_format,
+            "total_e2e_ms": round(elapsed * 1000, 2),
+            "inference_ms": round(result.latency_s * 1000, 2),
+        },
+    )
+    update_current_trace(output=trace_output)
+
+    # Slack notification (non-blocking, sampled)
+    from ..observability.slack_notifier import send_tts_notification
+
+    trace_id = get_current_trace_id()
+    send_tts_notification(
+        text=body.input,
+        voice=body.voice,
+        mode="clone",
+        endpoint="v1/audio/speech",
+        trace_output=trace_output,
+        trace_id=trace_id,
     )
 
     if body.response_format == "wav":
@@ -219,6 +235,7 @@ async def _stream_sse(
     cfg,
     client: str,
     t0: float,
+    trace_id: str | None = None,
 ) -> AsyncIterator[str]:
     """SSE generator for streaming TTS."""
     from ..utils.text import split_sentences
@@ -235,7 +252,14 @@ async def _stream_sse(
         yield f"data: {event}\n\n"
         return
 
-    base_req = _build_synthesis_req(body, cfg)
+    base_req = build_synthesis_request(
+        text=body.input,
+        cfg=cfg,
+        voice_ref=body.voice,
+        speed=body.speed,
+        class_temperature=body.temperature if body.temperature != 0.3 else None,
+        seed=body.seed,
+    )
     chunk_index = 0
     ttfc_logged = False
 
@@ -244,12 +268,13 @@ async def _stream_sse(
         t_sent = time.monotonic()
 
         syn_req = SynthesisRequest(
-            text=normalize_for_tts(sentence, language=body.language),
+            text=sentence,
             mode=base_req.mode,
             ref_audio_path=base_req.ref_audio_path,
             ref_text=base_req.ref_text,
             speed=base_req.speed,
             class_temperature=base_req.class_temperature,
+            _trace_id=trace_id,
         )
 
         try:
@@ -279,7 +304,7 @@ async def _stream_sse(
                     client, body.voice, time.monotonic() - t0,
                 )
                 ttfc_logged = True
-            audio_b64 = _tensor_to_base64_float32(tensor)
+            audio_b64 = tensor_to_base64_float32(tensor)
             event = json.dumps({
                 "chunk_index": chunk_index,
                 "audio": audio_b64,

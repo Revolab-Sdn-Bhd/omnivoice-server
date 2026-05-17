@@ -15,18 +15,56 @@ import re
 logger = logging.getLogger(__name__)
 
 
+def punc_norm(text: str) -> str:
+    """Normalize punctuation for TTS (from Chatterbox)."""
+    if not text:
+        return text
+    # Replace uncommon/LLM punctuation with comma pauses
+    for old, new in [
+        ("...", ", "),
+        ("…", ", "),
+        (":", ","),
+        (" - ", ", "),
+        (";", ", "),
+        ("—", "-"),
+        ("–", "-"),
+        (" ,", ","),
+    ]:
+        text = text.replace(old, new)
+    # Add full stop if no ending punctuation
+    text = text.rstrip(" ")
+    if not any(text.endswith(p) for p in {".", "!", "?", "-", ","}):
+        text += "."
+    return " ".join(text.split())
+
+
+
+_MALAY_WORDS = frozenset({
+    "sebelas", "dua", "tiga", "empat", "lima", "enam", "tujuh", "lapan",
+    "sembilan", "sepuluh", "seratus", "seribu", "ribu", "saya", "kita",
+    "ada", "itu", "ini", "dan", "yang", "di", "ke", "dari", "untuk",
+    "dengan", "tidak", "akan", "boleh", "ialah", "kod", "epal", "rumah",
+})
+
+
+def detect_language(text: str) -> str:
+    """Rule-based language detection. Returns 'ms' or 'en'."""
+    words = set(text.lower().split()) | set(re.findall(r"[a-zA-Z]+", text.lower()))
+    return "ms" if words & _MALAY_WORDS else "en"
+
+
 def normalize_for_tts(text: str, language: str = "en") -> str:
-    """Normalize text for TTS using revo-norm (numbers, abbreviations, etc.)."""
+    """Normalize text for TTS using revo-norm + punc_norm."""
     try:
-        from revo_norm import normalize_text
+        from revo_norm import add_random_commas, normalize_text
         norm_lang = "ms" if language in ("ms", "mixed") else "en"
-        return normalize_text(text, language=norm_lang)
+        text = normalize_text(text, language=norm_lang)
+        text = add_random_commas(text)
     except ImportError:
         logger.debug("revo_norm not installed, skipping text normalization")
-        return text
     except Exception:
         logger.debug("Text normalization failed, using raw text", exc_info=True)
-        return text
+    return punc_norm(text)
 
 # Split at sentence boundaries: period/exclamation/question followed by space and capital letter
 # Also split at Chinese/Japanese sentence endings

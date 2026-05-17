@@ -9,21 +9,37 @@ and map them to OmniVoice's SynthesisRequest internally.
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
-import tempfile
 from collections.abc import AsyncIterator
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..observability.tracer import (
+    build_synthesis_output,
+    get_current_trace_id,
+    get_observe,
+    update_current_trace,
+)
 from ..services.inference import InferenceService, QueueFullError, SynthesisRequest
 from ..services.metrics import MetricsService
 from ..utils.audio import tensors_to_wav_bytes
-from ..utils.text import normalize_for_tts, split_sentences
+from ..utils.text import split_sentences
+from ._shared import (  # noqa: I001
+    build_synthesis_request,
+    tensor_to_base64_float32,
+)
+from ._shared import (
+    get_cfg as _get_cfg,
+)
+from ._shared import (
+    get_inference_svc as _get_inference,
+)
+from ._shared import (
+    get_metrics_svc as _get_metrics,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -113,10 +129,10 @@ async def normalize_text_endpoint(request: Request):
     """Normalize text for TTS and return the result."""
     body = await request.json()
     text = body.get("text", "")
-    language = body.get("language", "en")
     if not text:
         return {"normalized": "", "original": text}
-    from ..utils.text import normalize_for_tts
+    from ..utils.text import detect_language, normalize_for_tts
+    language = detect_language(text)
     normalized = normalize_for_tts(text, language=language)
     return {"normalized": normalized, "original": text}
 
@@ -196,6 +212,12 @@ class TTSRequest(BaseModel):
     min_p: float = Field(default=0.05, ge=0.0, le=1.0)
     max_tokens: int = Field(default=1000, ge=1)
     num_step: int | None = Field(default=None, ge=2, le=32)
+    speed: float = Field(default=1.0, ge=0.5, le=3.0)
+    guidance_scale: float | None = Field(default=None, ge=0.0)
+    denoise: bool | None = Field(default=None)
+    t_shift: float | None = Field(default=None, ge=0.0, le=1.0)
+    position_temperature: float | None = Field(default=None, ge=0.0)
+    class_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     layer_penalty_factor: float | None = Field(default=None)
     preprocess_prompt: bool | None = Field(default=None)
     postprocess_output: bool | None = Field(default=None)
@@ -209,111 +231,17 @@ class TTSRequest(BaseModel):
     instruct: str | None = Field(
         default=None, description="Voice design instruction",
     )
-
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-
-def _get_inference(request: Request) -> InferenceService:
-    return request.app.state.inference_svc
-
-
-def _get_metrics(request: Request) -> MetricsService:
-    return request.app.state.metrics_svc
-
-
-def _get_cfg(request: Request):
-    return request.app.state.cfg
-
-
-def _resolve_voice_path(
-    voice_ref_path: str | None,
-    voice_ref_audio: str | None,
-    cfg,
-) -> tuple[str | None, str | None]:
-    """Resolve voice reference to (audio_path, ref_text).
-
-    Returns (temp_file_path_or_real_path, ref_text_or_empty).
-    If voice_ref_audio is provided, decodes base64 and writes to temp file.
-    """
-    if voice_ref_audio:
-        raw = base64.b64decode(voice_ref_audio)
-        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        tmp.write(raw)
-        tmp.close()
-        return tmp.name, ""
-
-    if voice_ref_path:
-        p = Path(voice_ref_path)
-        # If just a stem like "anwar", resolve to voices/anwar.wav
-        if not p.is_file() and not p.suffix:
-            p = cfg.voices_dir / f"{voice_ref_path}.wav"
-        if not p.is_file():
-            p = Path(voice_ref_path)
-
-        # Look for companion .txt or .json for ref_text
-        txt_path = p.with_suffix(".txt")
-        json_path = p.with_suffix(".json")
-        if txt_path.exists():
-            ref_text = txt_path.read_text().strip()
-        elif json_path.exists():
-            try:
-                ref_text = json.loads(json_path.read_text()).get("transcript", "")
-            except (json.JSONDecodeError, OSError):
-                ref_text = ""
-        else:
-            ref_text = ""
-        return str(p), ref_text
-
-    return None, None
-
-
-def _build_synthesis_req(body: TTSRequest, cfg) -> SynthesisRequest:
-    """Map SepBox TTSRequest to OmniVoice SynthesisRequest."""
-    audio_path, ref_text = _resolve_voice_path(
-        body.voice_ref_path, body.voice_ref_audio, cfg
+    seed: int | None = Field(
+        default=None, ge=0, le=2**32 - 1,
+        description="Fix random seed for deterministic output",
     )
-
-    if audio_path:
-        mode = "clone"
-    elif body.instruct:
-        mode = "design"
-    else:
-        mode = "design"
-
-    normalized_text = normalize_for_tts(body.text, language=body.language)
-
-    return SynthesisRequest(
-        text=normalized_text,
-        mode=mode,
-        instruct=body.instruct,
-        ref_audio_path=audio_path,
-        ref_text=ref_text,
-        speed=1.0,
-        duration=body.duration,
-        num_step=body.num_step,
-        language=body.language if body.language != "en" else None,
-        class_temperature=body.temperature if body.temperature != 0.3 else None,
-        layer_penalty_factor=body.layer_penalty_factor,
-        preprocess_prompt=body.preprocess_prompt,
-        postprocess_output=body.postprocess_output,
-        audio_chunk_duration=body.audio_chunk_duration,
-        audio_chunk_threshold=body.audio_chunk_threshold,
-    )
-
-
-def _tensor_to_base64_float32(tensor) -> str:
-    """Convert tensor to base64-encoded raw float32 PCM bytes."""
-    import numpy as np
-
-    flat = tensor.squeeze(0).cpu().float().numpy()
-    return base64.b64encode(flat.astype(np.float32).tobytes()).decode("ascii")
 
 
 # ── POST /generate ────────────────────────────────────────────────────────────
 
 
 @router.post("/generate", tags=["TTS"])
+@get_observe()(name="generate")
 async def generate(
     request: Request,
     body: TTSRequest,
@@ -322,21 +250,47 @@ async def generate(
     cfg=Depends(_get_cfg),
 ):
     """Run the full TTS pipeline and return a complete WAV file."""
+    update_current_trace(metadata={
+        "language": body.language,
+        "speed": body.speed,
+        "mode": "clone" if body.voice_ref_path else "design",
+    })
+
     if len(body.text) > 10_000:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Text exceeds 10,000 characters",
         )
 
-    syn_req = _build_synthesis_req(body, cfg)
+    syn_req = build_synthesis_request(
+        text=body.text,
+        cfg=cfg,
+        voice_ref=body.voice_ref_path,
+        voice_ref_audio=body.voice_ref_audio,
+        instruct=body.instruct,
+        speed=body.speed,
+        duration=body.duration,
+        num_step=body.num_step,
+        language=body.language if body.language != "en" else None,
+        guidance_scale=body.guidance_scale,
+        denoise=body.denoise,
+        t_shift=body.t_shift,
+        position_temperature=body.position_temperature,
+        class_temperature=body.class_temperature,
+        layer_penalty_factor=body.layer_penalty_factor,
+        preprocess_prompt=body.preprocess_prompt,
+        postprocess_output=body.postprocess_output,
+        audio_chunk_duration=body.audio_chunk_duration,
+        audio_chunk_threshold=body.audio_chunk_threshold,
+        seed=body.seed,
+        _trace_id=get_current_trace_id(),
+    )
 
-    if syn_req.ref_audio_path:
-        p = Path(syn_req.ref_audio_path)
-        if not p.exists():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Voice path not found: {body.voice_ref_path}",
-            )
+    if body.voice_ref_path and not syn_req.ref_audio_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Voice path not found: {body.voice_ref_path}",
+        )
 
     try:
         timeout_s = cfg.request_timeout_s
@@ -345,12 +299,14 @@ async def generate(
         )
         metrics_svc.record_success(result.latency_s)
     except QueueFullError as e:
+        update_current_trace(metadata={"error": f"QueueFullError: {e}"})
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(e),
         )
     except asyncio.TimeoutError:
         metrics_svc.record_timeout()
+        update_current_trace(metadata={"error": f"TimeoutError: {cfg.request_timeout_s}s"})
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=f"Synthesis timed out after {cfg.request_timeout_s}s",
@@ -358,6 +314,7 @@ async def generate(
     except Exception as e:
         metrics_svc.record_error()
         logger.exception("Synthesis failed")
+        update_current_trace(metadata={"error": f"{type(e).__name__}: {e}"})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Synthesis failed: {e}",
@@ -366,6 +323,34 @@ async def generate(
     wav_bytes = tensors_to_wav_bytes(
         result.tensors, target_lufs=body.target_lufs,
     )
+
+    # Attach audio + metrics to root trace (following ChatterBox pattern)
+    mode = "clone" if body.voice_ref_path else "design"
+    trace_output = build_synthesis_output(
+        tensors=result.tensors,
+        wav_bytes=wav_bytes,
+        latency_s=result.latency_s,
+        text=body.text,
+        voice=body.voice_ref_path or "design",
+        mode=mode,
+        speed=body.speed,
+        extra={"target_lufs": body.target_lufs},
+    )
+    update_current_trace(output=trace_output)
+
+    # Slack notification (non-blocking, sampled)
+    from ..observability.slack_notifier import send_tts_notification
+
+    trace_id = get_current_trace_id()
+    send_tts_notification(
+        text=body.text,
+        voice=body.voice_ref_path or "design",
+        mode=mode,
+        endpoint="generate",
+        trace_output=trace_output,
+        trace_id=trace_id,
+    )
+
     return Response(
         content=wav_bytes,
         media_type="audio/wav",
@@ -385,6 +370,7 @@ async def generate(
 
 
 @router.post("/generate/stream", tags=["TTS"])
+@get_observe()(name="generate_stream", capture_output=False)
 async def generate_stream(
     request: Request,
     body: TTSRequest,
@@ -393,14 +379,23 @@ async def generate_stream(
     cfg=Depends(_get_cfg),
 ):
     """Stream TTS audio as Server-Sent Events (SSE)."""
+    update_current_trace(metadata={
+        "language": body.language,
+        "speed": body.speed,
+        "mode": "clone" if body.voice_ref_path else "design",
+        "streaming": True,
+    })
+
     if len(body.text) > 10_000:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Text exceeds 10,000 characters",
         )
 
+    trace_id = get_current_trace_id()
+
     return StreamingResponse(
-        _stream_sse(body, inference_svc, metrics_svc, cfg),
+        _stream_sse(body, inference_svc, metrics_svc, cfg, trace_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -415,6 +410,7 @@ async def _stream_sse(
     inference_svc: InferenceService,
     metrics_svc: MetricsService,
     cfg,
+    trace_id: str | None = None,
 ) -> AsyncIterator[str]:
     """SSE generator yielding base64-encoded float32 PCM chunks."""
     sentences = split_sentences(body.text, max_chars=cfg.stream_chunk_max_chars)
@@ -429,7 +425,28 @@ async def _stream_sse(
         yield f"data: {event}\n\n"
         return
 
-    base_req = _build_synthesis_req(body, cfg)
+    base_req = build_synthesis_request(
+        text=body.text,
+        cfg=cfg,
+        voice_ref=body.voice_ref_path,
+        voice_ref_audio=body.voice_ref_audio,
+        instruct=body.instruct,
+        speed=body.speed,
+        duration=body.duration,
+        num_step=body.num_step,
+        language=body.language if body.language != "en" else None,
+        guidance_scale=body.guidance_scale,
+        denoise=body.denoise,
+        t_shift=body.t_shift,
+        position_temperature=body.position_temperature,
+        class_temperature=body.class_temperature,
+        layer_penalty_factor=body.layer_penalty_factor,
+        preprocess_prompt=body.preprocess_prompt,
+        postprocess_output=body.postprocess_output,
+        audio_chunk_duration=body.audio_chunk_duration,
+        audio_chunk_threshold=body.audio_chunk_threshold,
+        seed=body.seed,
+    )
     chunk_index = 0
     for sentence in sentences:
         syn_req = SynthesisRequest(
@@ -437,9 +454,20 @@ async def _stream_sse(
             mode=base_req.mode,
             ref_audio_path=base_req.ref_audio_path,
             ref_text=base_req.ref_text,
-            speed=1.0,
+            speed=base_req.speed,
             language=base_req.language,
+            num_step=base_req.num_step,
+            guidance_scale=base_req.guidance_scale,
+            denoise=base_req.denoise,
+            t_shift=base_req.t_shift,
+            position_temperature=base_req.position_temperature,
             class_temperature=base_req.class_temperature,
+            layer_penalty_factor=base_req.layer_penalty_factor,
+            preprocess_prompt=base_req.preprocess_prompt,
+            postprocess_output=base_req.postprocess_output,
+            audio_chunk_duration=base_req.audio_chunk_duration,
+            audio_chunk_threshold=base_req.audio_chunk_threshold,
+            _trace_id=trace_id,
         )
 
         try:
@@ -464,7 +492,7 @@ async def _stream_sse(
             return
 
         for tensor in result.tensors:
-            audio_b64 = _tensor_to_base64_float32(tensor)
+            audio_b64 = tensor_to_base64_float32(tensor)
             event = json.dumps({
                 "chunk_index": chunk_index,
                 "audio": audio_b64,
