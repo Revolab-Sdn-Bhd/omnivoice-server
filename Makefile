@@ -14,6 +14,9 @@ dev: ## Install with dev dependencies and auto-detected PyTorch CUDA variant
 test: ## Run tests
 	pytest tests/ -v
 
+test-e2e: ## Run e2e benchmark against live server (requires server running)
+	uv run python scripts/e2e_benchmark.py
+
 test-cov: ## Run tests with coverage report
 	pytest tests/ -v --cov=omnivoice_server --cov-report=term-missing --cov-report=html
 
