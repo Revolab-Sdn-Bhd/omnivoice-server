@@ -388,8 +388,9 @@ def build_synthesis_output(
 
     # Normalize text for display (shows what the model actually spoke)
     try:
-        from ..utils.text import normalize_for_tts
-        normalized_text = normalize_for_tts(text)
+        from ..utils.text import detect_language, normalize_for_tts
+        language = detect_language(text)
+        normalized_text = normalize_for_tts(text, language=language)
     except Exception:
         normalized_text = text
 
