@@ -1,8 +1,8 @@
 """
 WS /tts/websocket — Cartesia-compatible streaming TTS WebSocket endpoint.
 
-Supports concurrent context_ids, sentence-level processing, and
-cancel messages. Audio is sent as base64-encoded int16 PCM.
+Supports concurrent context_ids and cancel messages.
+Audio is sent as base64-encoded int16 PCM in 1-second chunks.
 """
 
 from __future__ import annotations
@@ -22,8 +22,6 @@ from ..observability.tracer import (
     get_langfuse_client,
     is_enabled,
 )
-from ..services.inference import SynthesisRequest
-from ..utils.text import split_sentences
 from ._shared import build_synthesis_request
 
 logger = logging.getLogger(__name__)
@@ -226,7 +224,7 @@ async def _process_transcript(
     audio_chunk_duration: float | None = None,
     audio_chunk_threshold: float | None = None,
 ) -> None:
-    """Process a single transcript message: split sentences, synthesize, stream."""
+    """Synthesize full text in one call, then stream PCM chunks."""
     import numpy as np
 
     span = None
@@ -267,78 +265,43 @@ async def _process_transcript(
         postprocess_output=postprocess_output,
         audio_chunk_duration=audio_chunk_duration,
         audio_chunk_threshold=audio_chunk_threshold,
+        _trace_id=span.trace_id if span else None,
     )
 
     if not base_req.ref_audio_path:
         await _send_error(ws, f"Voice '{voice_id}' not found", ctx_id)
         return
 
-    sentences = split_sentences(transcript, max_chars=cfg.stream_chunk_max_chars)
+    # Single synthesis call — same as /generate for consistency
+    try:
+        result = await inference_svc.synthesize(base_req)
+    except asyncio.CancelledError:
+        if span:
+            span.update(status="cancelled")
+            span.end()
+        return
+    except Exception as e:
+        logger.exception("WebSocket synthesis failed")
+        if span:
+            span.update(
+                status="error",
+                output={"error": f"{type(e).__name__}: {e}"},
+            )
+            span.end()
+        await _send_error(ws, str(e), ctx_id)
+        return
 
-    # Synthesize all sentences first (runs concurrently with preceding tasks).
+    # Convert tensors to int16 PCM buffer
     pcm_buffer = bytearray()
-    for i, sentence in enumerate(sentences):
-        if ctx_id in cancelled_contexts:
-            return
+    for tensor in result.tensors:
+        if isinstance(tensor, np.ndarray):
+            flat = tensor.squeeze().astype(np.float32)
+        else:
+            flat = tensor.squeeze(0).cpu().float().numpy()
+        pcm = (flat * 32767).clip(-32768, 32767).astype(np.int16)
+        pcm_buffer.extend(pcm.tobytes())
 
-        logger.info("[ws] ctx=%s sentence[%d] %r", ctx_id, i, sentence)
-        t_sent = time.monotonic()
-
-        syn_req = SynthesisRequest(
-            text=sentence,
-            mode=base_req.mode,
-            instruct=base_req.instruct,
-            ref_audio_path=base_req.ref_audio_path,
-            ref_text=base_req.ref_text,
-            speed=base_req.speed,
-            language=base_req.language,
-            num_step=base_req.num_step,
-            guidance_scale=base_req.guidance_scale,
-            denoise=base_req.denoise,
-            t_shift=base_req.t_shift,
-            duration=base_req.duration,
-            position_temperature=base_req.position_temperature,
-            class_temperature=base_req.class_temperature,
-            layer_penalty_factor=base_req.layer_penalty_factor,
-            preprocess_prompt=base_req.preprocess_prompt,
-            postprocess_output=base_req.postprocess_output,
-            audio_chunk_duration=base_req.audio_chunk_duration,
-            audio_chunk_threshold=base_req.audio_chunk_threshold,
-            _trace_id=span.trace_id if span else None,
-        )
-
-        try:
-            result = await inference_svc.synthesize(syn_req)
-        except asyncio.CancelledError:
-            if span:
-                span.update(status="cancelled")
-                span.end()
-            return
-        except Exception as e:
-            logger.exception("WebSocket synthesis failed")
-            if span:
-                span.update(
-                    status="error",
-                    output={"error": f"{type(e).__name__}: {e}"},
-                )
-                span.end()
-            await _send_error(ws, str(e), ctx_id)
-            return
-
-        logger.info(
-            "[ws] ctx=%s sentence[%d] synthesis=%.3fs",
-            ctx_id, i, time.monotonic() - t_sent,
-        )
-
-        for tensor in result.tensors:
-            if isinstance(tensor, np.ndarray):
-                flat = tensor.squeeze().astype(np.float32)
-            else:
-                flat = tensor.squeeze(0).cpu().float().numpy()
-            pcm = (flat * 32767).clip(-32768, 32767).astype(np.int16)
-            pcm_buffer.extend(pcm.tobytes())
-
-    # Wait for preceding tasks to preserve chunk ordering.
+    # Wait for preceding tasks to preserve chunk ordering
     for t in preceding:
         try:
             await t
@@ -348,26 +311,23 @@ async def _process_transcript(
     if ctx_id in cancelled_contexts:
         return
 
+    # Stream PCM in 1-second chunks
     chunk_idx = 0
     chunk_idx = await _send_buffered_chunks(
         ws, pcm_buffer, ctx_id, cancelled_contexts, chunk_idx, flush=True,
     )
+    synth_s = time.monotonic() - t0
     logger.info(
-        "[ws] ctx=%s ttfc=%.3fs total=%.3fs chunks=%d",
-        ctx_id, time.monotonic() - t0, time.monotonic() - t0, chunk_idx,
+        "[ws] ctx=%s total=%.3fs chunks=%d",
+        ctx_id, synth_s, chunk_idx,
     )
 
     if span:
-        import numpy as np
         import torch
 
-        total_s = time.monotonic() - t0
-
-        # Reconstruct tensor from pcm_buffer for quality metrics
         pcm_np = np.frombuffer(bytes(pcm_buffer), dtype=np.int16).astype(np.float32) / 32767.0
         recon_tensor = torch.from_numpy(pcm_np).unsqueeze(0)
 
-        # Convert to proper WAV bytes (with header) for Langfuse
         from ..utils.audio import tensor_to_wav_bytes
 
         wav_bytes = tensor_to_wav_bytes(recon_tensor)
@@ -375,21 +335,17 @@ async def _process_transcript(
         trace_output = build_synthesis_output(
             tensors=[recon_tensor],
             wav_bytes=wav_bytes,
-            latency_s=total_s,
+            latency_s=synth_s,
             text=transcript,
             voice=voice_id,
-            mode=mode,
+            mode=base_req.mode,
             speed=speed,
             device="cuda" if torch.cuda.is_available() else "cpu",
-            extra={
-                "chunks_sent": chunk_idx,
-                "sentences": len(sentences),
-            },
+            extra={"chunks_sent": chunk_idx},
         )
         span.update(output=trace_output)
         span.end()
 
-        # Slack notification (non-blocking, sampled)
         from ..observability.slack_notifier import send_tts_notification
 
         trace_id = span.trace_id if span else None
