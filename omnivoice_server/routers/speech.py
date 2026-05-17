@@ -63,6 +63,7 @@ class OpenAISpeechRequest(BaseModel):
     max_tokens: int = Field(default=1000, ge=1)
     chunk_size: int = Field(default=0, ge=0)
     language: str = Field(default="en", pattern=r"^(en|ms|mixed)$")
+    seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
 
 
 # ── GET /v1/audio/voices ─────────────────────────────────────────────────────
@@ -138,6 +139,7 @@ async def create_speech(
         voice_ref=body.voice,
         speed=body.speed,
         class_temperature=body.temperature if body.temperature != 0.3 else None,
+        seed=body.seed,
         _trace_id=get_current_trace_id(),
     )
 
@@ -256,6 +258,7 @@ async def _stream_sse(
         voice_ref=body.voice,
         speed=body.speed,
         class_temperature=body.temperature if body.temperature != 0.3 else None,
+        seed=body.seed,
     )
     chunk_index = 0
     ttfc_logged = False

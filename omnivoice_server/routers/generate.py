@@ -231,6 +231,10 @@ class TTSRequest(BaseModel):
     instruct: str | None = Field(
         default=None, description="Voice design instruction",
     )
+    seed: int | None = Field(
+        default=None, ge=0, le=2**32 - 1,
+        description="Fix random seed for deterministic output",
+    )
 
 
 # ── POST /generate ────────────────────────────────────────────────────────────
@@ -278,6 +282,7 @@ async def generate(
         postprocess_output=body.postprocess_output,
         audio_chunk_duration=body.audio_chunk_duration,
         audio_chunk_threshold=body.audio_chunk_threshold,
+        seed=body.seed,
         _trace_id=get_current_trace_id(),
     )
 
@@ -440,6 +445,7 @@ async def _stream_sse(
         postprocess_output=body.postprocess_output,
         audio_chunk_duration=body.audio_chunk_duration,
         audio_chunk_threshold=body.audio_chunk_threshold,
+        seed=body.seed,
     )
     chunk_index = 0
     for sentence in sentences:

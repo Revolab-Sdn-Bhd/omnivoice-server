@@ -128,6 +128,7 @@ async def tts_websocket(ws: WebSocket):
             postprocess_output = msg.get("postprocess_output")
             audio_chunk_duration = msg.get("audio_chunk_duration")
             audio_chunk_threshold = msg.get("audio_chunk_threshold")
+            seed = msg.get("seed")
 
             # Clear cancellation for this context on new message
             cancelled_contexts.discard(ctx_id)
@@ -165,6 +166,7 @@ async def tts_websocket(ws: WebSocket):
                     postprocess_output=postprocess_output,
                     audio_chunk_duration=audio_chunk_duration,
                     audio_chunk_threshold=audio_chunk_threshold,
+                    seed=seed,
                 )
             )
             active_tasks.setdefault(ctx_id, []).append(task)
@@ -223,6 +225,7 @@ async def _process_transcript(
     postprocess_output: bool | None = None,
     audio_chunk_duration: float | None = None,
     audio_chunk_threshold: float | None = None,
+    seed: int | None = None,
 ) -> None:
     """Synthesize full text in one call, then stream PCM chunks."""
     import numpy as np
@@ -265,6 +268,7 @@ async def _process_transcript(
         postprocess_output=postprocess_output,
         audio_chunk_duration=audio_chunk_duration,
         audio_chunk_threshold=audio_chunk_threshold,
+        seed=seed,
         _trace_id=span.trace_id if span else None,
     )
 
@@ -451,6 +455,10 @@ def _build_ws_docs() -> dict:
         "audio_chunk_threshold": {
             "type": "float|null",
             "description": "Audio chunk threshold",
+        },
+        "seed": {
+            "type": "int|null",
+            "description": "Fix random seed for deterministic output",
         },
     }
     return {

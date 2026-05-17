@@ -113,9 +113,11 @@ def get_voice(url: str) -> str | None:
 
 
 def benchmark_generate(
-    text: str, voice: str, url: str
+    text: str, voice: str, url: str, seed: int | None = None
 ) -> dict:
     payload = {"text": text, "voice_ref_path": voice}
+    if seed is not None:
+        payload["seed"] = seed
     t0 = time.perf_counter()
     r = httpx.post(f"{url}/generate", json=payload, timeout=120)
     wall = time.perf_counter() - t0
@@ -140,9 +142,11 @@ def benchmark_generate(
 
 
 def benchmark_speech(
-    text: str, voice: str, url: str
+    text: str, voice: str, url: str, seed: int | None = None
 ) -> dict:
     payload = {"input": text, "voice": voice}
+    if seed is not None:
+        payload["seed"] = seed
     t0 = time.perf_counter()
     r = httpx.post(f"{url}/v1/audio/speech", json=payload, timeout=120)
     wall = time.perf_counter() - t0
@@ -165,7 +169,7 @@ def benchmark_speech(
 
 
 def benchmark_websocket(
-    text: str, voice: str, url: str
+    text: str, voice: str, url: str, seed: int | None = None
 ) -> dict:
     import asyncio
     import base64
@@ -178,13 +182,12 @@ def benchmark_websocket(
     ws_url = url.replace("http", "ws") + "/tts/websocket"
 
     async def _run():
+        msg = {"transcript": text, "voice": {"id": voice}, "continue": False}
+        if seed is not None:
+            msg["seed"] = seed
         t0 = time.perf_counter()
         async with websockets.connect(ws_url) as ws:
-            await ws.send(
-                json.dumps(
-                    {"transcript": text, "voice": {"id": voice}, "continue": False}
-                )
-            )
+            await ws.send(json.dumps(msg))
             chunks = []
             while True:
                 resp = await ws.recv()
@@ -224,11 +227,12 @@ def run_benchmark(
     voice: str,
     endpoint_name: str,
     benchmark_fn,
+    seed: int | None = None,
 ) -> list[dict]:
     # Warmup
     for i in range(WARMUP_RUNS):
         try:
-            benchmark_fn(text, voice, BASE_URL)
+            benchmark_fn(text, voice, BASE_URL, seed=seed)
         except Exception as e:
             print(f"    warmup {i+1} failed: {e}")
             return []
@@ -237,7 +241,7 @@ def run_benchmark(
     results = []
     for i in range(BENCHMARK_RUNS):
         try:
-            r = benchmark_fn(text, voice, BASE_URL)
+            r = benchmark_fn(text, voice, BASE_URL, seed=seed)
             r["test_name"] = test_name
             r["endpoint"] = endpoint_name
             r["voice"] = voice
@@ -296,6 +300,40 @@ def check_cross_endpoint_consistency(all_results: list[dict]):
                 f"  {tc['name']}: {base_ep}={base_dur:.2f}s vs "
                 f"{ep}={avg_by_ep[ep]:.2f}s  ({diff_pct:.1f}% diff)  [{status}]"
             )
+
+
+def check_seed_consistency(voice: str, seed: int = 42):
+    """Run each endpoint once with same seed, compare audio hashes."""
+    print(f"\n--- Seed consistency (seed={seed}) ---")
+    for tc in TEST_CASES:
+        hashes = {}
+        durations = {}
+        for ep_name, bench_fn in ENDPOINTS:
+            try:
+                r = bench_fn(tc["text"], voice, BASE_URL, seed=seed)
+                hashes[ep_name] = r.get("audio_hash", "?")
+                durations[ep_name] = r.get("audio_duration_s", 0)
+            except Exception as e:
+                print(f"  {tc['name']}/{ep_name}: FAILED ({e})")
+                continue
+
+        if len(hashes) < 2:
+            continue
+
+        unique_hashes = set(hashes.values())
+        eps = list(durations.keys())
+        base_ep = eps[0]
+        base_dur = durations[base_ep]
+
+        print(f"  {tc['name']}:")
+        for ep in eps:
+            diff = abs(durations[ep] - base_dur) / base_dur * 100 if base_dur > 0 else 0
+            print(f"    {ep}: dur={durations[ep]:.3f}s hash={hashes[ep]} ({diff:.1f}% diff)")
+
+        if len(unique_hashes) == 1:
+            print("    IDENTICAL audio across all endpoints")
+        else:
+            print(f"    DIFFERENT audio ({len(unique_hashes)} distinct hashes)")
 
 
 def load_previous() -> dict | None:
@@ -378,12 +416,18 @@ def main():
 
     all_results = []
 
+    # Deterministic seed for reproducible benchmark runs
+    benchmark_seed = 42
+
     for tc in TEST_CASES:
         print(f"\n--- {tc['name']} ---")
         print(f"Text: {tc['text'][:60]}...")
 
         for ep_name, bench_fn in ENDPOINTS:
-            results = run_benchmark(tc["name"], tc["text"], voice, ep_name, bench_fn)
+            results = run_benchmark(
+                tc["name"], tc["text"], voice, ep_name, bench_fn,
+                seed=benchmark_seed,
+            )
             print_summary(tc["name"], ep_name, results)
             all_results.extend(results)
 
@@ -400,6 +444,7 @@ def main():
 
     # Cross-endpoint consistency
     check_cross_endpoint_consistency(all_results)
+    check_seed_consistency(voice, seed=benchmark_seed)
 
     # Save
     entry = {

@@ -65,6 +65,7 @@ class SynthesisRequest:
     postprocess_output: bool | None = None
     audio_chunk_duration: float | None = None
     audio_chunk_threshold: float | None = None
+    seed: int | None = None  # Fix random seed for deterministic output
     _trace_id: str | None = None  # Langfuse trace_id for nested span creation
 
 
@@ -512,6 +513,9 @@ class InferenceService:
 
         t0 = time.monotonic()
         model = self._model_svc.model
+
+        if req.seed is not None:
+            torch.manual_seed(req.seed)
 
         try:
             tensors = self._adapter.call(req, model)

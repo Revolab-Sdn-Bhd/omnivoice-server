@@ -98,6 +98,7 @@ def build_synthesis_request(
     audio_chunk_duration: float | None = None,
     audio_chunk_threshold: float | None = None,
     embedding_cache_path: str | None = None,
+    seed: int | None = None,
     _trace_id: str | None = None,
 ) -> SynthesisRequest:
     """Build SynthesisRequest with resolved voice and determined mode."""
@@ -131,6 +132,7 @@ def build_synthesis_request(
         audio_chunk_duration=audio_chunk_duration,
         audio_chunk_threshold=audio_chunk_threshold,
         embedding_cache_path=embedding_cache_path,
+        seed=seed,
         _trace_id=_trace_id,
     )
 
