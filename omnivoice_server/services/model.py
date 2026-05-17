@@ -149,7 +149,10 @@ class ModelService:
         try:
             from huggingface_hub import scan_cache_dir
             repo_id = self.cfg.model_id
-            cache = scan_cache_dir(self.cfg.model_cache_dir) if self.cfg.model_cache_dir else scan_cache_dir()
+            if self.cfg.model_cache_dir:
+                cache = scan_cache_dir(cache_dir=self.cfg.model_cache_dir)
+            else:
+                cache = scan_cache_dir()
             for repo in cache.repos:
                 if repo.repo_id == repo_id:
                     rev = next(iter(repo.revisions))

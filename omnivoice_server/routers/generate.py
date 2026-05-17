@@ -119,10 +119,10 @@ async def normalize_text_endpoint(request: Request):
     """Normalize text for TTS and return the result."""
     body = await request.json()
     text = body.get("text", "")
-    language = body.get("language", "en")
     if not text:
         return {"normalized": "", "original": text}
-    from ..utils.text import normalize_for_tts
+    from ..utils.text import detect_language, normalize_for_tts
+    language = detect_language(text)
     normalized = normalize_for_tts(text, language=language)
     return {"normalized": normalized, "original": text}
 

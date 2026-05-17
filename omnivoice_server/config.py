@@ -45,10 +45,13 @@ class Settings(BaseSettings):
     )
     device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
     num_step: int = Field(
-        default=16,
-        ge=16,
+        default=10,
+        ge=10,
         le=32,
-        description="Iterative decoding steps. Higher = better quality, slower. 16=fast, 32=balanced",
+        description=(
+            "Iterative decoding steps. "
+            "Higher = better quality, slower. 10=fast, 16=balanced, 32=best"
+        ),
     )
 
     # Optimization
